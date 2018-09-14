@@ -8,114 +8,11 @@ import * as vscode from 'vscode';
 import * as lsp from 'vscode-languageserver-protocol';
 import { createConverter } from 'vscode-languageclient/lib/protocolConverter';
 
-export type Id = number | string;
+import { Id, Vertex, Project, Document, Diagnostic, SymbolDeclaration, SymbolReference, Hover, Location, ResultSet, LocationLike, Edge, ReferenceSet } from './protocol';
 
-export interface Element {
-	_id: Id;
-	_type: 'vertex' | 'edge';
-}
-
-export interface Vertex extends Element {
-	_id: Id;
-	_type: 'vertex';
-	_kind: 'project' | 'document' | 'symbolDeclaration' | 'symbolReference' | 'hover' | 'diagnostic' | 'set' | 'location';
-}
-
-export interface Edge extends Element {
-	_id: Id;
-	_type: 'edge';
-	_kind: string;
-	source: Id;
-	target: Id;
-}
-
-export interface Project extends Vertex {
-	_kind: 'project',
-	projectFile: string;
-	contents?: string;
-}
-
-export interface Document extends Vertex {
-	_kind: 'document';
-	uri: string;
-	contents?: string;
-}
-
-export interface SymbolDeclaration extends Vertex {
-	_kind: 'symbolDeclaration';
-
-	name: string;
-	detail?: string;
-	kind: lsp.SymbolKind;
-	deprecated?: boolean;
-	range: lsp.Range;
-	selectionRange: lsp.Range;
-}
-
-export interface SymbolReference extends Vertex {
-	_kind: 'symbolReference';
-	name: string;
-	range: lsp.Range;
-}
-
-export interface Hover extends Vertex, lsp.Hover {
-	_kind: 'hover';
-}
-
-export interface Diagnostic extends lsp.Diagnostic, Vertex {
-	_kind: 'diagnostic';
-}
-
-export interface ResultSet<T extends string> extends Vertex {
-	_kind: 'set';
-	request: T;
-}
-
-export type ReferencesSet = ResultSet<'textDocument/references'>;
-
-export interface Location extends Vertex {
-	_kind: 'location';
-	range: lsp.Range;
-}
-
-type VertexTypes = Project | Document | Diagnostic | SymbolDeclaration | SymbolReference | Hover | ResultSet<any> | Location;
-type EdgeTypes = contains | diagnostic | child | hover | definition | references | item | set;
-type LocationLike = SymbolDeclaration | SymbolReference | Location;
-
-export interface contains extends Edge {
-	_kind: 'contains'
-}
-
-export interface diagnostic extends Edge {
-	_kind: 'diagnostic';
-}
-
-export interface child extends Edge {
-	_kind: 'child';
-}
-
-export interface hover extends Edge {
-	_kind: 'textDocument/hover';
-}
-
-export interface definition extends Edge {
-	_kind: 'textDocument/definition';
-}
-
-export interface references extends Edge {
-	_kind: 'textDocument/references';
-}
-
-export interface item extends Edge {
-	_kind: 'item';
-}
-
-export interface set extends Edge {
-	_kind: 'set';
-}
 
 interface Vertices {
-	all: Map<Id, VertexTypes>;
+	all: Map<Id, Vertex>;
 	projects: Map<Id, Project>;
 	documents: Map<Id, Document>;
 	diagnostics: Map<Id, Diagnostic>;
@@ -127,7 +24,7 @@ interface Vertices {
 }
 
 interface Out {
-	all: Map<Id, VertexTypes[]>;
+	all: Map<Id, Vertex[]>;
 	contains: Map<Id, (Document | LocationLike)[]>;
 	definition: Map<Id, SymbolDeclaration[]>;
 	hover: Map<Id, Hover[]>;
@@ -137,7 +34,7 @@ interface Out {
 }
 
 interface In {
-	all: Map<Id, VertexTypes[]>;
+	all: Map<Id, Vertex[]>;
 	contains: Map<Id, (Document | Project)[]>;
 	definition: Map<Id, SymbolReference[]>;
 	hover: Map<Id, (SymbolDeclaration | SymbolReference | Location)[]>;
@@ -190,7 +87,7 @@ class SipDatabase {
 	}
 
 	public load(): void {
-		let json: (VertexTypes | EdgeTypes)[] = JSON.parse(fs.readFileSync(this.file, 'utf8'));
+		let json: (Vertex | Edge)[] = JSON.parse(fs.readFileSync(this.file, 'utf8'));
 		for (let item of json) {
 			switch (item._type) {
 				case 'vertex':
@@ -203,7 +100,7 @@ class SipDatabase {
 		}
 	}
 
-	private processVertex(vertex: VertexTypes): void {
+	private processVertex(vertex: Vertex): void {
 		this.vertices.all.set(vertex._id, vertex);
 		switch(vertex._kind) {
 			case 'project':
@@ -234,7 +131,7 @@ class SipDatabase {
 		}
 	}
 
-	private processEdge(edge: EdgeTypes): void {
+	private processEdge(edge: Edge): void {
 		switch (edge._kind) {
 			case 'item':
 				this.storeEdge(this.out.item, undefined, edge);
@@ -257,8 +154,8 @@ class SipDatabase {
 		}
 	}
 
-	private storeEdge(outMap: Map<Id, VertexTypes[]> | undefined, inMap: Map<Id, VertexTypes[]> | undefined, edge: EdgeTypes): void {
-		const storeMap  = (map: Map<Id, VertexTypes[]>, edgeId: Id, vertexId: Id): void => {
+	private storeEdge(outMap: Map<Id, Vertex[]> | undefined, inMap: Map<Id, Vertex[]> | undefined, edge: Edge): void {
+		const storeMap  = (map: Map<Id, Vertex[]>, edgeId: Id, vertexId: Id): void => {
 			let vertex = this.vertices.all.get(vertexId);
 			if (vertex === void 0) {
 				throw new Error(`Couldn't resolve vertex for Id ${vertexId}`);
@@ -365,14 +262,15 @@ class SipDatabase {
 		}
 
 		let result: LocationLike[] = [];
-		const processResultSet = (set: ReferencesSet): void => {
+		const processResultSet = (set: ReferenceSet): void => {
 			let items = this.out.item.get(set._id);
 			if (items !== void 0) {
 				result.push(...items);
 			}
 			let sets = this.out.set.get(set._id);
 			if (sets !== void 0) {
-				sets.forEach(processResultSet);
+				// ToDo check type / request
+				sets.forEach((item) => processResultSet(item as ReferenceSet));
 			}
 		}
 
@@ -393,7 +291,8 @@ class SipDatabase {
 						result.push(reference);
 						break;
 					case 'set':
-						processResultSet(reference);
+						// ToDo check type / request
+						processResultSet(reference as ReferenceSet);
 						break;
 				}
 			}
