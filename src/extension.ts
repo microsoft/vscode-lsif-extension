@@ -465,7 +465,7 @@ export function activate(context: vscode.ExtensionContext) {
 		return new vscode.Location(vscode.Uri.parse(document.uri), converter.asRange(vertex.range));
 	}
 
-	let selector: vscode.DocumentSelector = { scheme: 'file', language: 'typescript' };
+	let selector: vscode.DocumentSelector = { scheme: 'file', language: 'typescript', exclusive: true }  as vscode.DocumentSelector;
 	vscode.languages.registerDefinitionProvider(selector as vscode.DocumentSelector, {
 		provideDefinition: (document, position) => {
 			let vertex = database.findVertex(document.uri.fsPath, position);

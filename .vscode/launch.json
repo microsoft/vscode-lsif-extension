@@ -12,7 +12,7 @@
             "runtimeExecutable": "${execPath}",
             "args": [
                 "--extensionDevelopmentPath=${workspaceFolder}",
-                "--enable-proposed-api MS.vscode-sip-reader"
+                "--enable-proposed-api=MS.vscode-sip-extension"
             ],
             "outFiles": [
                 "${workspaceFolder}/out/**/*.js"

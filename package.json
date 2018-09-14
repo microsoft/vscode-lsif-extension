@@ -1,6 +1,6 @@
 {
-    "name": "vscode-sip-reader",
-    "displayName": "vscode-sip-reader",
+    "name": "vscode-sip-extension",
+    "displayName": "vscode-sip-extension",
     "description": "",
     "version": "0.0.1",
     "publisher": "MS",
