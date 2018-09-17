@@ -13,6 +13,7 @@
     "activationEvents": [
         "*"
     ],
+    "enableProposedApi": true,
     "main": "./out/extension",
     "contributes": {
         "commands": [
