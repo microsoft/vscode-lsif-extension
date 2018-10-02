@@ -8,36 +8,28 @@ import * as vscode from 'vscode';
 import * as lsp from 'vscode-languageserver-protocol';
 import { createConverter } from 'vscode-languageclient/lib/protocolConverter';
 
-import { Id, Vertex, Project, Document, Diagnostic, SymbolDeclaration, SymbolReference, Hover, Location, ResultSet, LocationLike, Edge, ReferenceSet } from './protocol';
-
+import { Id, Vertex, Project, Document, Range, DiagnosticResult, DocumentSymbolResult, FoldingRangeResult, DocumentLinkResult, DefinitionResult, TypeDefinitionResult, HoverResult, ReferenceResult, ImplementationResult, Edge } from './protocol';
+import { Location } from 'vscode-languageserver-protocol';
 
 interface Vertices {
 	all: Map<Id, Vertex>;
 	projects: Map<Id, Project>;
 	documents: Map<Id, Document>;
-	diagnostics: Map<Id, Diagnostic>;
-	symbolDeclarations: Map<Id, SymbolDeclaration>;
-	symbolReferences: Map<Id, SymbolReference>;
-	hovers: Map<Id, Hover>;
-	locations: Map<Id, Location>;
-	sets: Map<Id, ResultSet<any>>;
+	ranges: Map<Id, Range>;
 }
 
 interface Out {
-	all: Map<Id, Vertex[]>;
-	contains: Map<Id, (Document | LocationLike)[]>;
-	definition: Map<Id, SymbolDeclaration[]>;
-	hover: Map<Id, Hover[]>;
-	reference: Map<Id, (ResultSet<'textDocument/references'> | LocationLike)[]>;
-	item: Map<Id, LocationLike[]>;
-	set: Map<Id, ResultSet<any>[]>;
-}
-
-interface In {
-	all: Map<Id, Vertex[]>;
-	contains: Map<Id, (Document | Project)[]>;
-	definition: Map<Id, SymbolReference[]>;
-	hover: Map<Id, (SymbolDeclaration | SymbolReference | Location)[]>;
+	contains: Map<Id, Document[] | Range[]>;
+	item: Map<Id, ({ type: 'declaration'; range: Range } | { type: 'reference'; range: Range } | { type: 'referenceResult'; result: ReferenceResult })[]>
+	documentSymbol: Map<Id, DocumentSymbolResult>;
+	foldingRange: Map<Id, FoldingRangeResult>;
+	documentLink: Map<Id, DocumentLinkResult>;
+	diagnostic: Map<Id, DiagnosticResult>;
+	definition: Map<Id, DefinitionResult>;
+	typeDefinition: Map<Id, TypeDefinitionResult>;
+	hover: Map<Id, HoverResult>;
+	references: Map<Id, ReferenceResult>;
+	implementation: Map<Id, ImplementationResult>;
 }
 
 interface Indices {
@@ -49,19 +41,13 @@ class SipDatabase {
 	private vertices: Vertices;
 	private indices: Indices;
 	private out: Out;
-	private in: In;
 
 	constructor(private file: string) {
 		this.vertices = {
 			all: new Map(),
 			projects: new Map(),
 			documents: new Map(),
-			diagnostics: new Map(),
-			symbolDeclarations: new Map(),
-			symbolReferences: new Map(),
-			hovers: new Map(),
-			locations: new Map(),
-			sets: new Map()
+			ranges: new Map()
 		};
 
 		this.indices = {
@@ -69,27 +55,24 @@ class SipDatabase {
 		};
 
 		this.out = {
-			all: new Map(),
 			contains: new Map(),
-			definition: new Map(),
-			hover: new Map(),
-			reference: new Map(),
 			item: new Map(),
-			set: new Map()
-		};
-
-		this.in = {
-			all: new Map(),
-			contains: new Map(),
+			documentSymbol: new Map(),
+			foldingRange: new Map(),
+			documentLink: new Map(),
+			diagnostic: new Map(),
 			definition: new Map(),
-			hover: new Map()
-		}
+			typeDefinition: new Map(),
+			hover: new Map(),
+			references: new Map(),
+			implementation: new Map()
+		};
 	}
 
 	public load(): void {
 		let json: (Vertex | Edge)[] = JSON.parse(fs.readFileSync(this.file, 'utf8'));
 		for (let item of json) {
-			switch (item._type) {
+			switch (item.type) {
 				case 'vertex':
 					this.processVertex(item);
 					break;
@@ -101,103 +84,111 @@ class SipDatabase {
 	}
 
 	private processVertex(vertex: Vertex): void {
-		this.vertices.all.set(vertex._id, vertex);
-		switch(vertex._kind) {
+		this.vertices.all.set(vertex.id, vertex);
+		switch(vertex.label) {
 			case 'project':
-				this.vertices.projects.set(vertex._id, vertex);
+				this.vertices.projects.set(vertex.id, vertex);
 				break;
 			case 'document':
-				this.vertices.documents.set(vertex._id, vertex);
+				this.vertices.documents.set(vertex.id, vertex);
 				this.indices.documents.set(vscode.Uri.parse(vertex.uri).fsPath, vertex);
 				break;
-			case 'diagnostic':
-				this.vertices.diagnostics.set(vertex._id, vertex);
+			case 'range':
+				this.vertices.ranges.set(vertex.id, vertex);
 				break;
-			case 'symbolDeclaration':
-				this.vertices.symbolDeclarations.set(vertex._id, vertex);
-				break;
-			case 'symbolReference':
-				this.vertices.symbolReferences.set(vertex._id, vertex);
-				break;
-			case 'set':
-				this.vertices.sets.set(vertex._id, vertex);
-				break;
-			case 'hover':
-				this.vertices.hovers.set(vertex._id, vertex);
-				break;
-			case 'location':
-				this.vertices.locations.set(vertex._id, vertex);
+			case 'range':
+				this.vertices.ranges.set(vertex.id, vertex);
 				break;
 		}
 	}
 
 	private processEdge(edge: Edge): void {
-		switch (edge._kind) {
-			case 'item':
-				this.storeEdge(this.out.item, undefined, edge);
-				break;
-			case 'set':
-				this.storeEdge(this.out.set, undefined, edge);
-				break;
+		let to: Vertex | undefined;
+		let values: any[] | undefined;
+		switch (edge.label) {
 			case 'contains':
-				this.storeEdge(this.out.contains, this.in.contains, edge);
+				to = this.vertices.all.get(edge.outV);
+				if (to === void 0) {
+					throw new Error(`No vertex found for Id ${edge.outV}`);
+				}
+				values = this.out.contains.get(edge.inV);
+				if (values === void 0) {
+					values = [ to as any ];
+					this.out.contains.set(edge.inV, values);
+				} else {
+					values.push(to);
+				}
+				break;
+			case 'item':
+				to = this.vertices.all.get(edge.outV);
+				if (to === void 0) {
+					throw new Error(`No vertex found for Id ${edge.outV}`);
+				}
+				values = this.out.item.get(edge.inV);
+				if (values === void 0) {
+					values = [ to as any ];
+					this.out.item.set(edge.inV, values);
+				} else {
+					values.push(to);
+				}
+				break;
+				break;
+			case 'textDocument/documentSymbol':
+				this.storeEdge(edge, this.out.documentSymbol);
+				break;
+			case 'textDocument/foldingRange':
+				this.storeEdge(edge, this.out.foldingRange);
+				break;
+			case 'textDocument/documentLink':
+				this.storeEdge(edge, this.out.documentLink);
+				break;
+			case 'textDocument/diagnostic':
+				this.storeEdge(edge, this.out.diagnostic);
 				break;
 			case 'textDocument/definition':
-				this.storeEdge(this.out.definition, this.in.definition, edge);
+				this.storeEdge(edge, this.out.definition);
+				break;
+			case 'textDocument/typeDefinition':
+				this.storeEdge(edge, this.out.typeDefinition);
 				break;
 			case 'textDocument/hover':
-				this.storeEdge(this.out.hover, this.in.hover, edge);
+				this.storeEdge(edge, this.out.hover);
 				break;
 			case 'textDocument/references':
-				this.storeEdge(this.out.reference, undefined, edge);
+				this.storeEdge(edge, this.out.references);
 				break;
 		}
 	}
 
-	private storeEdge(outMap: Map<Id, Vertex[]> | undefined, inMap: Map<Id, Vertex[]> | undefined, edge: Edge): void {
-		const storeMap  = (map: Map<Id, Vertex[]>, edgeId: Id, vertexId: Id): void => {
-			let vertex = this.vertices.all.get(vertexId);
-			if (vertex === void 0) {
-				throw new Error(`Couldn't resolve vertex for Id ${vertexId}`);
-			}
-			let value = map.get(edgeId);
-			if (value === void 0) {
-				value = [];
-				map.set(edgeId, value);
-			}
-			value.push(vertex);
+	private storeEdge(edge: Edge, outMap: Map<Id, Vertex>): void {
+		let to = this.vertices.all.get(edge.outV);
+		if (to === void 0) {
+			throw new Error(`No vertex found for Id ${edge.outV}`);
 		}
-		storeMap(this.out.all, edge.source, edge.target);
-		storeMap(this.in.all, edge.target, edge.source);
-		if (outMap) {
-			storeMap(outMap, edge.source, edge.target);
-		}
-		if (inMap) {
-			storeMap(inMap, edge.target, edge.source);
-		}
+		outMap.set(edge.outV, to);
 	}
 
-	public findVertex(file: string, position: vscode.Position): SymbolDeclaration | SymbolReference | Location | undefined {
+	public findRange(file: string, position: vscode.Position): Range | undefined {
 		let document = this.indices.documents.get(file);
 		if (document === void 0) {
 			return undefined;
 		}
-		let contains = this.out.contains.get(document._id);
+		let contains = this.out.contains.get(document.id);
 		if (contains === void 0 || contains.length === 0) {
 			return undefined;
 		}
 
-		let candidate: SymbolDeclaration | SymbolReference | Location | undefined;
+		let candidate: Range | undefined;
 		for (let item of contains) {
-			if (item._kind === 'document') {
+			if (item.label === 'document') {
 				continue;
 			}
-			let range = item.range;
+			let range = item;
 			if (SipDatabase.containsPosition(range, position)) {
 				if (!candidate) {
 					candidate = item;
 				} else {
-					if (SipDatabase.containsRange(candidate.range, range)) {
+					if (SipDatabase.containsRange(candidate, range)) {
 						candidate = item;
 					}
 				}
@@ -206,19 +197,19 @@ class SipDatabase {
 		return candidate;
 	}
 
-	public containedIn(vertex: SymbolDeclaration | SymbolReference | Location | undefined): Document | undefined {
-		if (vertex === void 0) {
-			return void 0;
-		}
-		let result = this.in.contains.get(vertex._id);
-		if (result === void 0 || result.length !== 1) {
-			return undefined;
-		}
-		let item = result[0];
-		return item._kind === 'document' ? item : undefined;
-	}
+	// public containedIn(vertex: SymbolDeclaration | SymbolReference | Location | undefined): Document | undefined {
+	// 	if (vertex === void 0) {
+	// 		return void 0;
+	// 	}
+	// 	let result = this.in.contains.get(vertex._id);
+	// 	if (result === void 0 || result.length !== 1) {
+	// 		return undefined;
+	// 	}
+	// 	let item = result[0];
+	// 	return item._kind === 'document' ? item : undefined;
+	// }
 
-	public definitions(vertex: SymbolReference | Location | undefined): SymbolDeclaration[] | undefined {
+	public definitions(vertex: Range | undefined): Location[] | undefined {
 		if (vertex === void 0) {
 			return undefined;
 		}
@@ -367,14 +358,18 @@ export function activate(context: vscode.ExtensionContext) {
 	let selector: vscode.DocumentSelector = { scheme: 'file', language: 'typescript', exclusive: true }  as vscode.DocumentSelector;
 	vscode.languages.registerDefinitionProvider(selector as vscode.DocumentSelector, {
 		provideDefinition: (document, position) => {
-			let vertex = database.findVertex(document.uri.fsPath, position);
-			if (vertex === void 0) {
+			let range = database.findRange(document.uri.fsPath, position);
+			if (range === void 0) {
 				return undefined;
 			}
-			if (vertex._kind === 'symbolDeclaration') {
-				return makeLocation(vertex);
+			@@ Got Defintion link is necessary on definition as well.
+
+
+
+			if (range.label === 'symbolDeclaration') {
+				return makeLocation(range);
 			}
-			let definitions = database.definitions(vertex);
+			let definitions = database.definitions(range);
 			if (definitions === void 0) {
 				return undefined;
 			}
@@ -391,7 +386,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 	vscode.languages.registerHoverProvider(selector, {
 		provideHover: (document, position) => {
-			let vertex = database.findVertex(document.uri.fsPath, position);
+			let vertex = database.findRange(document.uri.fsPath, position);
 			if (vertex === void 0) {
 				return undefined;
 			}
@@ -406,7 +401,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 	vscode.languages.registerReferenceProvider(selector, {
 		provideReferences: (document, positions) => {
-			let vertex = database.findVertex(document.uri.fsPath, positions);
+			let vertex = database.findRange(document.uri.fsPath, positions);
 			if (vertex === void 0) {
 				return undefined;
 			}
