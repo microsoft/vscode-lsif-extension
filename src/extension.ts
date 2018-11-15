@@ -12,7 +12,7 @@ import * as vscode from 'vscode';
 import * as lsp from 'vscode-languageserver-protocol';
 import { createConverter, Converter } from 'vscode-languageclient/lib/protocolConverter';
 
-import { Id, Vertex, Project, Document, Range, DiagnosticResult, DocumentSymbolResult, FoldingRangeResult, DocumentLinkResult, DefinitionResult, TypeDefinitionResult, HoverResult, ReferenceResult, ImplementationResult, Edge, RangeBasedDocumentSymbol } from './protocol';
+import { Id, Vertex, Project, Document, Range, DiagnosticResult, DocumentSymbolResult, FoldingRangeResult, DocumentLinkResult, DefinitionResult, TypeDefinitionResult, HoverResult, ReferenceResult, ImplementationResult, Edge, RangeBasedDocumentSymbol, DeclarationResult, ResultSet } from './protocol';
 
 interface Vertices {
 	all: Map<Id, Vertex>;
@@ -21,15 +21,17 @@ interface Vertices {
 	ranges: Map<Id, Range>;
 }
 
-type ItemTarget = { type: 'declaration'; range: Range } | { type: 'reference'; range: Range } | { type: 'referenceResult'; result: ReferenceResult };
+type ItemTarget = { type: 'declaration'; range: Range } | { type: 'definition'; range: Range } | { type: 'reference'; range: Range } | { type: 'referenceResult'; result: ReferenceResult };
 
 interface Out {
 	contains: Map<Id, Document[] | Range[]>;
-	item: Map<Id, ItemTarget[]>
+	item: Map<Id, ItemTarget[]>;
+	refersTo: Map<Id, ResultSet>;
 	documentSymbol: Map<Id, DocumentSymbolResult>;
 	foldingRange: Map<Id, FoldingRangeResult>;
 	documentLink: Map<Id, DocumentLinkResult>;
 	diagnostic: Map<Id, DiagnosticResult>;
+	declaration: Map<Id, DeclarationResult>;
 	definition: Map<Id, DefinitionResult>;
 	typeDefinition: Map<Id, TypeDefinitionResult>;
 	hover: Map<Id, HoverResult>;
@@ -48,6 +50,7 @@ interface Indices {
 interface ResolvedReferenceResult {
 	references: (Range | lsp.Location)[];
 	declarations: (Range | lsp.Location)[];
+	definitions: (Range | lsp.Location)[];
 	referenceResults: ReferenceResult[];
 }
 
@@ -75,10 +78,12 @@ class SipDatabase {
 		this.out = {
 			contains: new Map(),
 			item: new Map(),
+			refersTo: new Map(),
 			documentSymbol: new Map(),
 			foldingRange: new Map(),
 			documentLink: new Map(),
 			diagnostic: new Map(),
+			declaration: new Map(),
 			definition: new Map(),
 			typeDefinition: new Map(),
 			hover: new Map(),
@@ -154,6 +159,9 @@ class SipDatabase {
 					case 'declaration':
 						itemTarget = { type: edge.property, range: to as Range };
 						break;
+					case 'definition':
+						itemTarget = { type: edge.property, range: to as Range };
+						break;
 					case 'referenceResult':
 						itemTarget = { type: edge.property, result: to as ReferenceResult };
 						break;
@@ -166,6 +174,9 @@ class SipDatabase {
 						values.push(itemTarget);
 					}
 				}
+				break;
+			case 'refersTo':
+				this.out.refersTo.set(from.id, to as ResultSet);
 				break;
 			case 'textDocument/documentSymbol':
 				this.out.documentSymbol.set(from.id, to as DocumentSymbolResult);
@@ -260,7 +271,7 @@ class SipDatabase {
 		if (range === void 0) {
 			return undefined;
 		}
-		let definitionResult: DefinitionResult | undefined = this.out.definition.get(range.id);
+		let definitionResult: DefinitionResult | undefined = this.getResult(range, this.out.definition);
 		if (definitionResult === void 0) {
 			return undefined;
 		}
@@ -281,13 +292,7 @@ class SipDatabase {
 			return undefined;
 		}
 
-		let hoverResult: HoverResult | undefined = this.out.hover.get(range.id);
-		if (hoverResult === void 0) {
-			let definition = this.findDefinition(range);
-			if (definition) {
-				hoverResult = this.out.hover.get(definition.id);
-			}
-		}
+		let hoverResult: HoverResult | undefined = this.getResult(range, this.out.hover);
 		if (hoverResult === void 0) {
 			return undefined;
 		}
@@ -302,18 +307,24 @@ class SipDatabase {
 			return undefined;
 		}
 
-		let referenceResult: ReferenceResult | undefined = this.out.references.get(range.id);
-		if (referenceResult === void 0) {
-			let definition = this.findDefinition(range);
-			if (definition) {
-				referenceResult = this.out.references.get(definition.id);
-			}
-		}
+		let referenceResult: ReferenceResult | undefined = this.getResult(range, this.out.references);
 		if (referenceResult === void 0) {
 			return undefined;
 		}
 
 		return this.asReferenceResult(referenceResult, context, new Set());
+	}
+
+	private getResult<T>(range: Range, edges: Map<Id, T>): T | undefined {
+		let result: T | undefined = edges.get(range.id);
+		if (result !== undefined) {
+			return result;
+		}
+		let resultSet = this.out.refersTo.get(range.id);
+		if (resultSet === undefined) {
+			return undefined;
+		}
+		return edges.get(resultSet.id);
 	}
 
 	private asReferenceResult(value: ReferenceResult, context: vscode.ReferenceContext, dedup: Set<Id>): vscode.Location[] | undefined {
@@ -326,6 +337,11 @@ class SipDatabase {
 		}
 		if (resolved.declarations !== void 0) {
 			for (let item of resolved.declarations) {
+				this.addLocation(result, item, dedup);
+			}
+		}
+		if (resolved.definitions !== void 0) {
+			for (let item of resolved.definitions) {
 				this.addLocation(result, item, dedup);
 			}
 		}
@@ -368,6 +384,18 @@ class SipDatabase {
 				}
 			}
 		}
+		let definitions: (Range | lsp.Location)[] | undefined;
+		if (includeDeclaration && value.definitions !== void 0) {
+			definitions = [];
+			for (let item of value.definitions) {
+				if (lsp.Location.is(item)) {
+					definitions.push(item);
+				} else {
+					let range = this.vertices.ranges.get(item);
+					range !== void 0 && definitions.push(range);
+				}
+			}
+		}
 		let referenceResults: ReferenceResult[] | undefined;
 		if (value.referenceResults) {
 			referenceResults = [];
@@ -379,6 +407,7 @@ class SipDatabase {
 		if (references === void 0 && declarations === void 0 && referenceResults === void 0) {
 			references = [];
 			declarations = [];
+			definitions = [];
 			referenceResults = [];
 			let targets = this.out.item.get(value.id);
 			if (targets) {
@@ -389,6 +418,8 @@ class SipDatabase {
 							break;
 						case 'declaration':
 							declarations.push(target.range);
+						case 'definition':
+							definitions.push(target.range);
 							break;
 						case 'referenceResult':
 							referenceResults.push(target.result);
@@ -400,6 +431,7 @@ class SipDatabase {
 		return {
 			references: references || [],
 			declarations: declarations || [],
+			definitions: definitions || [],
 			referenceResults: referenceResults || []
 		};
 	}
@@ -427,27 +459,8 @@ class SipDatabase {
 		}
 	}
 
-	private findDefinition(range: Range): Range | undefined {
-		let definitionResult = this.out.definition.get(range.id);
-		if (definitionResult === void 0) {
-			return undefined;
-		}
-		let element: Id | lsp.Location | undefined;
-		if (Array.isArray(definitionResult.result)) {
-			if (definitionResult.result.length > 0) {
-				element = definitionResult.result[0];
-			}
-		} else {
-			element = definitionResult.result;
-		}
-		if (element === void 0) {
-			return undefined;
-		}
-		if (lsp.Location.is(element)) {
-			return this.findRangeFromRange(vscode.Uri.parse(element.uri).fsPath, element.range);
-		} else {
-			return this.vertices.ranges.get(element);
-		}
+	private findResultSet(range: Range): ResultSet | undefined {
+		return this.out.refersTo.get(range.id);
 	}
 
 	private findRangeFromPosition(file: string, position: vscode.Position): Range | undefined {

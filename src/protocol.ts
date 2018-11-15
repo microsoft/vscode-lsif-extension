@@ -16,7 +16,7 @@ export type Id = number | string;
 export namespace Id {
 	export function is(value: any): value is Id {
 		let candidate: Id = value;
-		return candidate !== void 0 && candidate !== null && (Is.string(value) || Is.number(value));
+		return candidate !== undefined && candidate !== null && (Is.string(value) || Is.number(value));
 	}
 }
 
@@ -32,13 +32,18 @@ export interface Element {
  * All know vertices literal types.
  */
 export type VertexLiterals =
+	'metaData' |
 	'project' |
+	'package' |
 	'document' |
+	'resultSet' |
 	'range' |
+	'monikerAliases' |
 	'documentSymbolResult' |
 	'foldingRangeResult' |
 	'documentLinkResult' |
 	'diagnosticResult' |
+	'declarationResult' |
 	'definitionResult' |
 	'typeDefinitionResult' |
 	'hoverResult' |
@@ -57,9 +62,18 @@ export interface V extends Element {
 }
 
 /**
+ * A result set acts as a hub to share n LSP request results
+ * between different ranges.
+ */
+export interface ResultSet extends V {
+
+	label: 'resultSet';
+}
+
+/**
  * All know range tag literal types.
  */
-export type RangeTagLiterals = 'reference' | 'declaration' | 'none';
+export type RangeTagLiterals = 'declaration' | 'definition' | 'reference' | 'unknown';
 
 /**
  * The range represents a declaration.
@@ -72,12 +86,12 @@ export interface DeclarationTag {
 	type: 'declaration';
 
 	/**
-	 * The text covered by the range
+	 * The text covered by the range.
 	 */
 	text: string;
 
 	/**
-	 * The kind of the declaration.
+	 * The symbol kind.
 	 */
 	kind: lsp.SymbolKind;
 
@@ -93,11 +107,49 @@ export interface DeclarationTag {
 	detail?: string;
 
 	/**
-	 * A position indenpendent key to identify the range inside a document. For most
+	 * A position independent key to identify the result set in a project. For most
 	 * languages this can only be computed for exported (API) symbols and is therefore
 	 * optional.
 	 */
-	key?: string;
+	moniker?: string;
+}
+
+/**
+ * The range respresents a definition
+ */
+export interface DefinitionTag {
+	/**
+	 * A type identifier for the declaration tag.
+	 */
+	type: 'definition';
+
+	/**
+	 * The text covered by the range
+	 */
+	text: string;
+
+	/**
+	 * The symbol kind.
+	 */
+	kind: lsp.SymbolKind;
+
+	/**
+	 * The full range of the definition not including leading/trailing whitespace but everything else, e.g comments and code.
+	 * The range must be included in fullRange.
+	 */
+	fullRange: lsp.Range;
+
+	/**
+	 * Optional detail information for the definition.
+	 */
+	detail?: string;
+
+	/**
+	 * A position independent key to identify the result set in a project. For most
+	 * languages this can only be computed for exported (API) symbols and is therefore
+	 * optional.
+	 */
+	moniker?: string;
 }
 
 /**
@@ -117,14 +169,14 @@ export interface ReferenceTag {
 }
 
 /**
- * The range is generic (neither a reference nor a declaration).
+ * The type of the range is unknown.
  */
-export interface GenericTag {
+export interface UnknownTag {
 
 	/**
-	 * A type identifier for the generic tag.
+	 * A type identifier for the unknown tag.
 	 */
-	type: 'generic';
+	type: 'unknown';
 
 	/**
 	 * The text covered by the range.
@@ -135,24 +187,27 @@ export interface GenericTag {
 /**
  * All available range tag types.
  */
-export type RangeTag = DeclarationTag | ReferenceTag | GenericTag;
+export type RangeTag = DefinitionTag | DeclarationTag | ReferenceTag | UnknownTag;
 
 /**
  * The const definitions for range tags.
  */
 export namespace RangeTag {
+	/** definition tag */
+	export const definition: 'definition' = 'definition';
 	/** declaration tag */
 	export const declaration: 'declaration' = 'declaration';
 	/** reference tag */
 	export const reference: 'reference' = 'reference';
-	/** generic tag */
-	export const generic: 'generic' = 'generic';
+	/** unknown tag */
+	export const unknown: 'unknown' = 'unknown';
 }
 
 /**
  * A vertex representing a range inside a document.
  */
 export interface Range extends V, lsp.Range {
+
 	label: 'range';
 
 	/**
@@ -165,6 +220,16 @@ export interface Range extends V, lsp.Range {
  * The id type of the range is a normal id.
  */
 export type RangeId = Id;
+
+/**
+ * A range representing a definition.
+ */
+export interface DefinitionRange extends Range {
+	/**
+	 * The definition meta data.
+	 */
+	tag: DefinitionTag;
+}
 
 /**
  * A range representing a declaration.
@@ -186,6 +251,40 @@ export interface ReferenceRange extends Range {
 	tag: ReferenceTag;
 }
 
+export interface MonikerAliases extends V {
+
+	/**
+	 * The label property.
+	 */
+	label: 'monikerAliases';
+
+	/**
+	 * The original moniker
+	 */
+	moniker: string;
+
+	/**
+	 * Known aliases
+	 */
+	aliases: string[];
+}
+
+/**
+ * The meta data vertex.
+ */
+export interface MetaData extends V {
+
+	/**
+	 * The label property.
+	 */
+	label: 'metaData';
+
+	/**
+	 * The dump version
+	 */
+	version: string;
+}
+
 /**
  * A project vertex.
  */
@@ -194,28 +293,116 @@ export interface Project extends V {
 	/**
 	 * The label property.
 	 */
-	label: 'project',
+	label: 'project';
 
 	/**
-	 * The URI of the project.
+	 * The project name
 	 */
-	projectFile: Uri;
+	name: string;
 
 	/**
-	 * The document's language Id as defined in the LSP
-	 * (https://microsoft.github.io/language-server-protocol/specification)
+	 * The project kind like 'typescript' or 'csharp'. See also the language ids
+	 * in the [specification](https://microsoft.github.io/language-server-protocol/specification)
 	 */
-	languageId: string;
+	kind: string;
 
 	/**
-	 * The version of the compiler / tool used to create the dump.
+	 * The version of the project.
 	 */
-	version: string;
+	version?: string;
 
 	/**
-	 * Optional the content of the project, `base64` encoded.
+	 * The projects's repository location
+	 */
+	repository?: RepositoryInformation;
+
+	/**
+	 * The resource URI of the project file.
+	 */
+	resource?: Uri;
+
+	/**
+	 * Optional the content of the project file, `base64` encoded.
 	 */
 	contents?: string;
+}
+
+export interface RepositoryInformation {
+	/**
+	 * The repository type. For example git, tfs, ...
+	 */
+	type: string;
+
+	/**
+	 * The repository url.
+	 */
+	url: string;
+}
+
+export interface PackageImplementation {
+	/**
+	 * The package kind / system like 'npm', 'nuget', ...
+	 */
+	kind: string;
+
+	/**
+	 * The package's name
+	 */
+	name: string;
+
+	/**
+	 * The resource URI of the package file.
+	 */
+	resource?: Uri;
+
+	/**
+	 * The version of the package declaration
+	 */
+	version?: string;
+
+	/**
+	 * The repository of the package implementation
+	 */
+	repository?: RepositoryInformation;
+}
+
+export interface Package extends V {
+
+	/**
+	 * The label property.
+	 */
+	label: 'package';
+
+	/**
+	 * The package kind / system like 'npm', 'nuget', ...
+	 */
+	kind: string;
+
+	/**
+	 * The package's name
+	 */
+	name: string;
+
+	/**
+	 * The resource URI of the package file.
+	 */
+	resource?: Uri;
+
+	/**
+	 * The package's version
+	 */
+	version?: string;
+
+	/**
+	 * The package's repository location
+	 */
+	repository?: RepositoryInformation;
+
+	/**
+	 * The implementation of the package if this package is a
+	 * declaration facade.
+	 */
+	implementation?: PackageImplementation;
 }
 
 /**
@@ -320,6 +507,13 @@ export interface DocumentLinkResult extends V {
 	result: lsp.DocumentLink[];
 }
 
+export interface DeclarationResult extends V {
+	/**
+	 * The label property.
+	 */
+	label: 'declarationResult';
+}
+
 /**
  * The LSP defines the result of a `textDocument/definition` request as
  * `Location | Location[]. In the SIP we allow to use range ids as well.
@@ -417,12 +611,17 @@ export interface ReferenceResult extends V {
 	declarations?: (RangeId | lsp.Location)[];
 
 	/**
+	 * The definitions belonging to the reference result.
+	 */
+	definitions?: (RangeId | lsp.Location)[];
+
+	/**
 	 * The references belonging to the reference result.
 	 */
 	references?: (RangeId | lsp.Location)[];
 
 	/**
-	 * The reference results belonging to this result result.
+	 * The reference results belonging to this reference result.
 	 */
 	referenceResults?: ReferenceResultId[];
 }
@@ -458,14 +657,19 @@ export interface ImplementationResult extends V {
  * All available vertex types
  */
 export type Vertex =
+	MetaData |
 	Project |
+	Package |
 	Document |
+	ResultSet |
 	Range |
+	MonikerAliases |
 	DocumentSymbolResult |
 	FoldingRangeResult |
 	DocumentLinkResult |
 	DiagnosticResult |
 	DefinitionResult |
+	DeclarationResult |
 	TypeDefinitionResult |
 	HoverResult |
 	ReferenceResult |
@@ -477,11 +681,14 @@ export type Vertex =
 export type EdgeLiterals =
 	'contains' |
 	'item' |
+	'refersTo' |
+	'dependsOn' |
 	'textDocument/documentSymbol' |
 	'textDocument/foldingRange' |
 	'textDocument/documentLink' |
 	'textDocument/diagnostic' |
 	'textDocument/definition' |
+	'textDocument/declaration' |
 	'textDocument/typeDefinition' |
 	'textDocument/hover' |
 	'textDocument/references' |
@@ -518,9 +725,17 @@ export interface ItemEdge<S extends V, T extends V> extends E<S, T, 'item'> {
  * An edge expressing containment relationship. The relationship exist between:
  *
  * - `Project` -> `Document`
+ * - `Package` -> `Document`
  * - `Document` -> `Range`
  */
-export type contains = E<Project, Document, 'contains'> | E<Document, Range, 'contains'>;
+export type contains = E<Project, Document, 'contains'> | E<Package, Document, 'contains'> | E<Document, Range, 'contains'>;
+
+/**
+ * An edge associating a range with a Sip Item. The relationship exists between:
+ *
+ * - `Range` -> `ResultSet`
+ */
+export type refersTo = E<Range, ResultSet, 'refersTo'>;
 
 /**
  * An edge representing a item in a result set. The relationship exists between:
@@ -529,6 +744,14 @@ export type contains = E<Project, Document, 'contains'> | E<Document, Range, 'co
  * - `ReferenceResult` -> `ReferenceResult`
  */
 export type item = ItemEdge<ReferenceResult, Range> | ItemEdge<ReferenceResult, ReferenceResult>;
+
+/**
+ * An edge representing a depends on relationship between a projects and packages. The relationship exists between:
+ *
+ * - `Project` -> `Package`
+ * - `Package` -> `Package`
+ */
+export type dependsOn = E<Project, Package, 'dependsOn'> | E<Package, Package, 'dependsOn'>;
 
 /**
  * An edge representing a `textDocument/documentSymbol` releationship. The relationship exists between:
@@ -560,40 +783,52 @@ export type textDocument_documentLink = E<Document, DocumentLinkResult, 'textDoc
 export type textDocument_diagnostic = E<Project, DiagnosticResult, 'textDocument/diagnostic'> | E<Document, DiagnosticResult, 'textDocument/diagnostic'>;
 
 /**
+ * An edge representing a declaration relationship. The relationship exists between:
+ *
+ * - `Range` -> `DefinitionResult`
+ * - `ResultSet` -> `DefinitionResult`
+ */
+export type textDocument_declaration = E<Range, DeclarationResult, 'textDocument/declaration'> | E<ResultSet, DeclarationResult, 'textDocument/declaration'>;
+
+/**
  * An edge representing a definition relationship. The relationship exists between:
  *
- * - `Location` -> `SymbolDeclaration`
- * - `SymbolReference` -> `SymbolDeclaration`
+ * - `Range` -> `DefinitionResult`
+ * - `ResultSet` -> `DefinitionResult`
  */
-export type textDocument_definition = E<Range, Range, 'textDocument/definition'>;
+export type textDocument_definition = E<Range, DefinitionResult, 'textDocument/definition'> | E<ResultSet, DefinitionResult, 'textDocument/definition'>;
 
 /**
  * An edge representing a type definition relations ship. The relationship exists between:
  *
  * - `Range` -> `TypeDefinitionResult`
+ * - `ResultSet` -> `TypeDefinitionResult`
  */
-export type textDocument_typeDefinition = E<Range, TypeDefinitionResult, 'textDocument/typeDefinition'>;
+export type textDocument_typeDefinition = E<Range, TypeDefinitionResult, 'textDocument/typeDefinition'> | E<ResultSet, TypeDefinitionResult, 'textDocument/typeDefinition'>;
 
 /**
  * An edge representing a hover relationship. The relationship exists between:
  *
- * - `LocationLike` -> `Hover`
+ * - `Range` -> `HoverResult`
+ * - `ResultSet` -> `HoverResult`
  */
-export type textDocument_hover = E<Range, HoverResult, 'textDocument/hover'>;
+export type textDocument_hover = E<Range, HoverResult, 'textDocument/hover'> | E<ResultSet, HoverResult, 'textDocument/hover'>;
 
 /**
  * An edge representing a references relationship. The relationship exists between:
  *
  * - `Range` -> `ReferenceResult`
+ * - `ResultSet` -> `ReferenceResult`
  */
-export type textDocument_references = E<Range, ReferenceResult, 'textDocument/references'>;
+export type textDocument_references = E<Range, ReferenceResult, 'textDocument/references'> | E<ResultSet, ReferenceResult, 'textDocument/references'>;
 
 /**
  * An edge representing a implementation relationship. The relationship exists between:
  *
- * - `Range` -> `ImplementationSet`
+ * - `Range` -> `ImplementationResult`
+ * - `ResultSet` -> `ImplementationResult`
  */
-export type textDocument_implementation = E<Range, ImplementationResult, 'textDocument/implementation'>;
+export type textDocument_implementation = E<Range, ImplementationResult, 'textDocument/implementation'> | E<ResultSet, ImplementationResult, 'textDocument/implementation'>;
 
 /**
  *
@@ -602,6 +837,8 @@ export type textDocument_implementation = E<Range, ImplementationResult, 'textDo
 export type Edge =
 	contains |
 	item |
+	refersTo |
+	dependsOn |
 	textDocument_documentSymbol |
 	textDocument_foldingRange |
 	textDocument_documentLink |
