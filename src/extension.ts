@@ -542,7 +542,10 @@ export function activate(context: vscode.ExtensionContext) {
 	const database = new SipDatabase(sipFile);
 	database.load();
 
-	let selector: vscode.DocumentSelector = { scheme: 'file', language: 'typescript', exclusive: true }  as vscode.DocumentSelector;
+	let selector: vscode.DocumentSelector = [
+		{ scheme: 'file', language: 'typescript', exclusive: true }  as vscode.DocumentFilter,
+		{ scheme: 'file', language: 'javascript', exclusive: true }  as vscode.DocumentFilter
+	];
 	vscode.languages.registerFoldingRangeProvider(selector, {
 		provideFoldingRanges: (document) => {
 			return database.foldingRanges(document);
