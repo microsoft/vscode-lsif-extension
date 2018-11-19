@@ -459,10 +459,6 @@ class SipDatabase {
 		}
 	}
 
-	private findResultSet(range: Range): ResultSet | undefined {
-		return this.out.refersTo.get(range.id);
-	}
-
 	private findRangeFromPosition(file: string, position: vscode.Position): Range | undefined {
 		let document = this.indices.documents.get(file);
 		if (document === void 0) {
@@ -490,27 +486,6 @@ class SipDatabase {
 			}
 		}
 		return candidate;
-	}
-
-	private findRangeFromRange(file: string, range: lsp.Range): Range | undefined {
-		let document = this.indices.documents.get(file);
-		if (document === void 0) {
-			return undefined;
-		}
-		let contains = this.out.contains.get(document.id);
-		if (contains === void 0 || contains.length === 0) {
-			return undefined;
-		}
-		for (let item of contains) {
-			if (item.label === 'document') {
-				continue;
-			}
-			if (range.start.line === item.start.line && range.start.character === item.start.character && range.end.line === item.end.line && range.end.character === item.end.character) {
-				return item;
-			}
-		}
-		return undefined;
-
 	}
 
 	private static containsPosition(range: lsp.Range, position: vscode.Position): boolean {
