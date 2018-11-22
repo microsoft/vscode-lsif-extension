@@ -9,6 +9,8 @@ import * as fs from 'fs';
 
 import * as vscode from 'vscode';
 
+//import * as semver from 'semver';
+
 import * as lsp from 'vscode-languageserver-protocol';
 import { createConverter, Converter } from 'vscode-languageclient/lib/protocolConverter';
 
@@ -56,6 +58,7 @@ interface ResolvedReferenceResult {
 
 class SipDatabase {
 
+	private version: string | undefined;
 	private vertices: Vertices;
 	private indices: Indices;
 	private out: Out;
@@ -110,11 +113,17 @@ class SipDatabase {
 					break;
 			}
 		}
+		if (this.version && this.version !== '0.1.0') {
+			throw new Error(`Unsupported version  ${this.version}`);
+		}
 	}
 
 	private processVertex(vertex: Vertex): void {
 		this.vertices.all.set(vertex.id, vertex);
 		switch(vertex.label) {
+			case 'metaData':
+				this.version = vertex.version;
+				break;
 			case 'project':
 				this.vertices.projects.set(vertex.id, vertex);
 				break;
