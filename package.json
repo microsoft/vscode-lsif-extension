@@ -4,6 +4,13 @@
 	"author": "Microsoft Corporation",
 	"license": "MIT",
 	"version": "0.1.0",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/Microsoft/vscode-lsif-extension.git"
+	},
+	"bugs": {
+		"url": "https://github.com/Microsoft/vscode-lsif-extension/issues"
+	},
 	"publisher": "ms-vscode",
 	"categories": [],
 	"keywords": [
