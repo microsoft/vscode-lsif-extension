@@ -2,17 +2,12 @@
  * Copyright (c) Microsoft Corporation. All rights reserved.
  * Licensed under the MIT License. See License.txt in the project root for license information.
  * ------------------------------------------------------------------------------------------ */
-'use strict';
 
-import * as path from 'path';
 import * as fs from 'fs';
 
-import * as vscode from 'vscode';
+import URI from 'vscode-uri';
 
-//import * as semver from 'semver';
-
-import * as lsp from 'vscode-languageserver-protocol';
-import { createConverter, Converter } from 'vscode-languageclient/lib/protocolConverter';
+import * as lsp from 'vscode-languageserver';
 
 import { Id, Vertex, Project, Document, Range, DiagnosticResult, DocumentSymbolResult, FoldingRangeResult, DocumentLinkResult, DefinitionResult, TypeDefinitionResult, HoverResult, ReferenceResult, ImplementationResult, Edge, RangeBasedDocumentSymbol, DeclarationResult, ResultSet } from './protocol';
 
@@ -56,15 +51,13 @@ interface ResolvedReferenceResult {
 	referenceResults: ReferenceResult[];
 }
 
-class SipDatabase {
+export class SipDatabase {
 
 	private version: string | undefined;
 	private vertices: Vertices;
 	private indices: Indices;
 	private out: Out;
 	private in: In;
-
-	private converter: Converter;
 
 	constructor(private file: string) {
 		this.vertices = {
@@ -97,8 +90,6 @@ class SipDatabase {
 		this.in = {
 			contains: new Map()
 		}
-
-		this.converter = createConverter();
 	}
 
 	public load(): void {
@@ -129,7 +120,7 @@ class SipDatabase {
 				break;
 			case 'document':
 				this.vertices.documents.set(vertex.id, vertex);
-				this.indices.documents.set(vscode.Uri.parse(vertex.uri).fsPath, vertex);
+				this.indices.documents.set(vertex.uri, vertex);
 				break;
 			case 'range':
 				this.vertices.ranges.set(vertex.id, vertex);
@@ -214,8 +205,8 @@ class SipDatabase {
 		}
 	}
 
-	public foldingRanges(d: vscode.TextDocument): vscode.FoldingRange[] | undefined {
-		let document = this.indices.documents.get(d.uri.fsPath);
+	public foldingRanges(uri: string): lsp.FoldingRange[] | undefined {
+		let document = this.indices.documents.get(uri);
 		if (document === void 0) {
 			return undefined;
 		}
@@ -223,15 +214,15 @@ class SipDatabase {
 		if (foldingRangeResult === void 0) {
 			return undefined;
 		}
-		let result: vscode.FoldingRange[] = [];
+		let result: lsp.FoldingRange[] = [];
 		for (let item of foldingRangeResult.result) {
-			result.push(this.converter.asFoldingRange(item));
+			result.push(Object.assign(Object.create(null), item));
 		}
 		return result;
 	}
 
-	public documentSymbols(d: vscode.TextDocument): vscode.DocumentSymbol[] | undefined {
-		let document = this.indices.documents.get(d.uri.fsPath);
+	public documentSymbols(uri: string): lsp.DocumentSymbol[] | undefined {
+		let document = this.indices.documents.get(uri);
 		if (document === void 0) {
 			return undefined;
 		}
@@ -240,31 +231,34 @@ class SipDatabase {
 			return undefined;
 		}
 		let first = documentSymbolResult.result[0];
+		let result: lsp.DocumentSymbol[] = [];
 		if (lsp.DocumentSymbol.is(first)) {
-			return this.converter.asDocumentSymbols(documentSymbolResult.result as lsp.DocumentSymbol[]);
+			for (let item of documentSymbolResult.result) {
+				result.push(Object.assign(Object.create(null), item));
+			}
 		} else {
-			let result: vscode.DocumentSymbol[] = [];
 			for (let item of (documentSymbolResult.result as RangeBasedDocumentSymbol[])) {
 				let converted = this.toDocumentSymbol(item);
 				if (converted !== void 0) {
 					result.push(converted);
 				}
 			}
-			return result;
 		}
+		return result;
 	}
 
-	private toDocumentSymbol(value: RangeBasedDocumentSymbol): vscode.DocumentSymbol | undefined {
+	private toDocumentSymbol(value: RangeBasedDocumentSymbol): lsp.DocumentSymbol | undefined {
 		let range = this.vertices.ranges.get(value.id)!;
 		let tag = range.tag;
-		if (tag === void 0 || tag.type !== 'declaration') {
+		if (tag === void 0 || !(tag.type === 'declaration' || tag.type === 'definition')) {
 			return undefined;
 		}
-		let result: vscode.DocumentSymbol = new vscode.DocumentSymbol(
-			tag.text, tag.detail || '', tag.kind - 1,
-			this.converter.asRange(tag.fullRange),
-			this.converter.asRange(range));
+		let result: lsp.DocumentSymbol = lsp.DocumentSymbol.create(
+			tag.text, tag.detail || '', tag.kind,
+			tag.fullRange, this.asRange(range)
+		)
 		if (value.children && value.children.length > 0) {
+			result.children = [];
 			for (let child of value.children) {
 				let converted = this.toDocumentSymbol(child);
 				if (converted !== void 0) {
@@ -275,8 +269,8 @@ class SipDatabase {
 		return result;
 	}
 
-	public definitions(document: vscode.TextDocument, position: vscode.Position): vscode.Location | vscode.Location[] | undefined {
-		let range = this.findRangeFromPosition(document.uri.fsPath, position);
+	public definitions(uri: string, position: lsp.Position): lsp.Location | lsp.Location[] | undefined {
+		let range = this.findRangeFromPosition(uri, position);
 		if (range === void 0) {
 			return undefined;
 		}
@@ -285,7 +279,7 @@ class SipDatabase {
 			return undefined;
 		}
 		if (Array.isArray(definitionResult.result)) {
-			let result: vscode.Location[] = [];
+			let result: lsp.Location[] = [];
 			for (let element of definitionResult.result) {
 				result.push(this.asLocation(element));
 			}
@@ -295,8 +289,8 @@ class SipDatabase {
 		}
 	}
 
-	public hover(document: vscode.TextDocument, position: vscode.Position): vscode.Hover | undefined {
-		let range = this.findRangeFromPosition(document.uri.fsPath, position);
+	public hover(uri: string, position: lsp.Position): lsp.Hover | undefined {
+		let range = this.findRangeFromPosition(uri, position);
 		if (range === void 0) {
 			return undefined;
 		}
@@ -307,11 +301,14 @@ class SipDatabase {
 		}
 
 		let hoverRange = hoverResult.result.range === '${startRange}' ? range : hoverResult.result.range;
-		return this.converter.asHover(Object.assign({}, { contents: hoverResult.result.contents }, { range: hoverRange }))
+		return {
+			contents: hoverResult.result.contents,
+			range: hoverRange
+		};
 	}
 
-	public references(document: vscode.TextDocument, position: vscode.Position, context: vscode.ReferenceContext): vscode.Location[] | undefined {
-		let range = this.findRangeFromPosition(document.uri.fsPath, position);
+	public references(uri: string, position: lsp.Position, context: lsp.ReferenceContext): lsp.Location[] | undefined {
+		let range = this.findRangeFromPosition(uri, position);
 		if (range === void 0) {
 			return undefined;
 		}
@@ -336,9 +333,9 @@ class SipDatabase {
 		return edges.get(resultSet.id);
 	}
 
-	private asReferenceResult(value: ReferenceResult, context: vscode.ReferenceContext, dedup: Set<Id>): vscode.Location[] | undefined {
+	private asReferenceResult(value: ReferenceResult, context: lsp.ReferenceContext, dedup: Set<Id>): lsp.Location[] | undefined {
 		let resolved = this.resolveReferenceResult(value, context.includeDeclaration);
-		let result: vscode.Location[] = [];
+		let result: lsp.Location[] = [];
 		if (resolved.references !== void 0) {
 			for (let item of resolved.references) {
 				this.addLocation(result, item, dedup);
@@ -445,30 +442,20 @@ class SipDatabase {
 		};
 	}
 
-	private addLocation(result: vscode.Location[], value: Range | lsp.Location, dedup: Set<Id>): void {
+	private addLocation(result: lsp.Location[], value: Range | lsp.Location, dedup: Set<Id>): void {
 		if (lsp.Location.is(value)) {
-			result.push(this.converter.asLocation(value));
+			result.push(value);
 		} else {
 			if (dedup.has(value.id)) {
 				return;
 			}
 			let document = this.in.contains.get(value.id)!;
-			result.push(new vscode.Location(vscode.Uri.parse((document as Document).uri), this.converter.asRange(value)));
+			result.push(lsp.Location.create((document as Document).uri, this.asRange(value)));
 			dedup.add(value.id);
 		}
 	}
 
-	private asLocation(value: Id | lsp.Location): vscode.Location {
-		if (lsp.Location.is(value)) {
-			return this.converter.asLocation(value);
-		} else {
-			let range = this.vertices.ranges.get(value)!;
-			let document = this.in.contains.get(range.id)!;
-			return new vscode.Location(vscode.Uri.parse((document as Document).uri), this.converter.asRange(range));
-		}
-	}
-
-	private findRangeFromPosition(file: string, position: vscode.Position): Range | undefined {
+	private findRangeFromPosition(file: string, position: lsp.Position): Range | undefined {
 		let document = this.indices.documents.get(file);
 		if (document === void 0) {
 			return undefined;
@@ -497,7 +484,30 @@ class SipDatabase {
 		return candidate;
 	}
 
-	private static containsPosition(range: lsp.Range, position: vscode.Position): boolean {
+	private asLocation(value: Id | lsp.Location): lsp.Location {
+		if (lsp.Location.is(value)) {
+			return value;
+		} else {
+			let range = this.vertices.ranges.get(value)!;
+			let document = this.in.contains.get(range.id)!;
+			return lsp.Location.create((document as Document).uri, this.asRange(range));
+		}
+	}
+
+	private asRange(value: Range): lsp.Range {
+		return {
+			start: {
+				line: value.start.line,
+				character: value.start.character
+			},
+			end: {
+				line: value.end.line,
+				character: value.end.character
+			}
+		};
+	}
+
+	private static containsPosition(range: lsp.Range, position: lsp.Position): boolean {
 		if (position.line < range.start.line || position.line > range.end.line) {
 			return false;
 		}
@@ -528,64 +538,4 @@ class SipDatabase {
 		}
 		return true;
 	}
-}
-
-// this method is called when your extension is activated
-// your extension is activated the very first time the command is executed
-export function activate(context: vscode.ExtensionContext) {
-
-	if (vscode.workspace.workspaceFolders === void 0) {
-		return;
-	}
-
-	let folder = vscode.workspace.workspaceFolders[0];
-	if (folder === void 0) {
-		return;
-	}
-
-	let sipFile = path.join(folder.uri.fsPath, 'sip.json');
-	if (!fs.existsSync(sipFile)) {
-		return;
-	}
-
-	const database = new SipDatabase(sipFile);
-	database.load();
-
-	let selector: vscode.DocumentSelector = [
-		{ scheme: 'file', language: 'typescript', exclusive: true }  as vscode.DocumentFilter,
-		{ scheme: 'file', language: 'javascript', exclusive: true }  as vscode.DocumentFilter
-	];
-	vscode.languages.registerFoldingRangeProvider(selector, {
-		provideFoldingRanges: (document) => {
-			return database.foldingRanges(document);
-		}
-	});
-
-	vscode.languages.registerDocumentSymbolProvider(selector, {
-		provideDocumentSymbols: (document) => {
-			return database.documentSymbols(document);
-		}
-	});
-
-	vscode.languages.registerDefinitionProvider(selector, {
-		provideDefinition: (document, position) => {
-			return database.definitions(document, position);
-		}
-	});
-
-	vscode.languages.registerHoverProvider(selector, {
-		provideHover: (document, position) => {
-			return database.hover(document, position);
-		}
-	});
-
-	vscode.languages.registerReferenceProvider(selector, {
-		provideReferences: (document, position, context) => {
-			return database.references(document, position, context);
-		}
-	})
-}
-
-// this method is called when your extension is deactivated
-export function deactivate() {
 }

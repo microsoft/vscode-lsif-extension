@@ -1,0 +1,21 @@
+{
+	"name": "vscode-lsif-server",
+	"description": "VSCode Language Server Index Format client",
+	"author": "Microsoft Corporation",
+	"license": "MIT",
+	"version": "0.0.1",
+	"publisher": "vscode",
+	"engines": {
+		"vscode": "^1.29.0"
+	},
+	"scripts": {
+		"update-vscode": "vscode-install",
+		"postinstall": "vscode-install"
+	},
+	"dependencies": {
+		"vscode-languageclient": "^5.1.1"
+	},
+	"devDependencies": {
+		"vscode": "^1.1.22"
+	}
+}

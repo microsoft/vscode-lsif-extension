@@ -1,0 +1,15 @@
+{
+	"name": "lsif-server",
+	"description": "Generic Language Server Index Format Server",
+	"author": "Microsoft Corporation",
+	"license": "MIT",
+	"version": "0.1.0",
+	"engines": {
+		"node": "*"
+	},
+	"dependencies": {
+		"vscode-uri": "^1.0.6",
+		"vscode-languageserver": "^5.1.0"
+	},
+	"scripts": {}
+}

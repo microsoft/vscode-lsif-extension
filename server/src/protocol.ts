@@ -34,11 +34,9 @@ export interface Element {
 export type VertexLiterals =
 	'metaData' |
 	'project' |
-	'package' |
 	'document' |
 	'resultSet' |
 	'range' |
-	'monikerAliases' |
 	'documentSymbolResult' |
 	'foldingRangeResult' |
 	'documentLinkResult' |
@@ -96,6 +94,11 @@ export interface DeclarationTag {
 	kind: lsp.SymbolKind;
 
 	/**
+	 * Indicates if this symbol is deprecated.
+	 */
+	deprecated?: boolean;
+
+	/**
 	 * The full range of the declaration not including leading/trailing whitespace but everything else, e.g comments and code.
 	 * The range must be included in fullRange.
 	 */
@@ -111,7 +114,7 @@ export interface DeclarationTag {
 	 * languages this can only be computed for exported (API) symbols and is therefore
 	 * optional.
 	 */
-	moniker?: string;
+	moniker?: { local: boolean, value: string };
 }
 
 /**
@@ -134,6 +137,11 @@ export interface DefinitionTag {
 	kind: lsp.SymbolKind;
 
 	/**
+	 * Indicates if this symbol is deprecated.
+	 */
+	deprecated?: boolean;
+
+	/**
 	 * The full range of the definition not including leading/trailing whitespace but everything else, e.g comments and code.
 	 * The range must be included in fullRange.
 	 */
@@ -149,7 +157,7 @@ export interface DefinitionTag {
 	 * languages this can only be computed for exported (API) symbols and is therefore
 	 * optional.
 	 */
-	moniker?: string;
+	moniker?: { local: boolean, value: string };
 }
 
 /**
@@ -251,24 +259,6 @@ export interface ReferenceRange extends Range {
 	tag: ReferenceTag;
 }
 
-export interface MonikerAliases extends V {
-
-	/**
-	 * The label property.
-	 */
-	label: 'monikerAliases';
-
-	/**
-	 * The original moniker
-	 */
-	moniker: string;
-
-	/**
-	 * Known aliases
-	 */
-	aliases: string[];
-}
-
 /**
  * The meta data vertex.
  */
@@ -307,16 +297,6 @@ export interface Project extends V {
 	kind: string;
 
 	/**
-	 * The version of the project.
-	 */
-	version?: string;
-
-	/**
-	 * The projects's repository location
-	 */
-	repository?: RepositoryInformation;
-
-	/**
 	 * The resource URI of the project file.
 	 */
 	resource?: Uri;
@@ -337,72 +317,6 @@ export interface RepositoryInformation {
 	 * The repository url.
 	 */
 	url: string;
-}
-
-export interface PackageImplementation {
-	/**
-	 * The package kind / system like 'npm', 'nuget', ...
-	 */
-	kind: string;
-
-	/**
-	 * The package's name
-	 */
-	name: string;
-
-	/**
-	 * The resource URI of the package file.
-	 */
-	resource?: Uri;
-
-	/**
-	 * The version of the package declaration
-	 */
-	version?: string;
-
-	/**
-	 * The repository of the package implementation
-	 */
-	repository?: RepositoryInformation;
-}
-
-export interface Package extends V {
-
-	/**
-	 * The label property.
-	 */
-	label: 'package';
-
-	/**
-	 * The package kind / system like 'npm', 'nuget', ...
-	 */
-	kind: string;
-
-	/**
-	 * The package's name
-	 */
-	name: string;
-
-	/**
-	 * The resource URI of the package file.
-	 */
-	resource?: Uri;
-
-	/**
-	 * The package's version
-	 */
-	version?: string;
-
-	/**
-	 * The package's repository location
-	 */
-	repository?: RepositoryInformation;
-
-	/**
-	 * The implementation of the package if this package is a
-	 * declaration facade.
-	 */
-	implementation?: PackageImplementation;
 }
 
 /**
@@ -659,11 +573,9 @@ export interface ImplementationResult extends V {
 export type Vertex =
 	MetaData |
 	Project |
-	Package |
 	Document |
 	ResultSet |
 	Range |
-	MonikerAliases |
 	DocumentSymbolResult |
 	FoldingRangeResult |
 	DocumentLinkResult |
@@ -728,7 +640,7 @@ export interface ItemEdge<S extends V, T extends V> extends E<S, T, 'item'> {
  * - `Package` -> `Document`
  * - `Document` -> `Range`
  */
-export type contains = E<Project, Document, 'contains'> | E<Package, Document, 'contains'> | E<Document, Range, 'contains'>;
+export type contains = E<Project, Document, 'contains'> | E<Document, Range, 'contains'>;
 
 /**
  * An edge associating a range with a Sip Item. The relationship exists between:
@@ -744,14 +656,6 @@ export type refersTo = E<Range, ResultSet, 'refersTo'>;
  * - `ReferenceResult` -> `ReferenceResult`
  */
 export type item = ItemEdge<ReferenceResult, Range> | ItemEdge<ReferenceResult, ReferenceResult>;
-
-/**
- * An edge representing a depends on relationship between a projects and packages. The relationship exists between:
- *
- * - `Project` -> `Package`
- * - `Package` -> `Package`
- */
-export type dependsOn = E<Project, Package, 'dependsOn'> | E<Package, Package, 'dependsOn'>;
 
 /**
  * An edge representing a `textDocument/documentSymbol` releationship. The relationship exists between:
@@ -838,7 +742,6 @@ export type Edge =
 	contains |
 	item |
 	refersTo |
-	dependsOn |
 	textDocument_documentSymbol |
 	textDocument_foldingRange |
 	textDocument_documentLink |
