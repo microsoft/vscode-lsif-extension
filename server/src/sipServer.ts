@@ -4,96 +4,203 @@
  * ------------------------------------------------------------------------------------------ */
 'use strict';
 
+import { promisify } from 'util';
 import * as path from 'path';
 import * as fs from 'fs';
 
+const exists = promisify(fs.exists);
+
 import URI from 'vscode-uri';
-import { createConnection, ProposedFeatures, InitializeParams, TextDocumentSyncKind, WorkspaceFolder, ServerCapabilities, TextDocument, TextDocumentPositionParams, TextDocumentIdentifier } from 'vscode-languageserver';
+import { createConnection, ProposedFeatures, InitializeParams, TextDocumentSyncKind, WorkspaceFolder, ServerCapabilities, TextDocument, TextDocumentPositionParams, TextDocumentIdentifier, BulkUnregistration, BulkRegistration, DocumentSymbolRequest, DocumentSelector, FoldingRangeRequest, HoverRequest, DefinitionRequest, ReferencesRequest } from 'vscode-languageserver';
 
 import { SipDatabase } from './sipDatabase';
 
 // Create a connection for the server. The connection uses Node's IPC as a transport.
 // Also include all preview / proposed LSP features.
 let connection = createConnection(ProposedFeatures.all);
-let database: SipDatabase | undefined;
+let databases: Map<string, SipDatabase> = new Map();
+let folders: WorkspaceFolder[] | null;
 
 connection.onInitialize((params: InitializeParams) => {
-	let defaultCapabilities: ServerCapabilities = {
-		textDocumentSync: TextDocumentSyncKind.None
-	};
-	let folders: WorkspaceFolder[] | null = params.workspaceFolders;
-	if (!folders || folders.length !== 1) {
-		return {
-			capabilities: defaultCapabilities
-		};
-	}
-	let sipFile: string = path.join(URI.parse(folders[0].uri).fsPath, 'sip.json');
-	if (!fs.existsSync(sipFile)) {
-		return {
-			capabilities: defaultCapabilities
-		};
-	}
-	try {
-		database = new SipDatabase(sipFile);
-		database.load();
-		return {
-			capabilities: {
-				textDocumentSync: TextDocumentSyncKind.None,
-				documentSymbolProvider: true,
-				foldingRangeProvider: true,
-				hoverProvider: true,
-				definitionProvider: true,
-				referencesProvider: true
+
+	folders = params.workspaceFolders;
+	return {
+		capabilities: {
+			textDocumentSync: TextDocumentSyncKind.None,
+			workspace: {
+				workspaceFolders: {
+					supported: true,
+					changeNotifications: true
+				}
 			}
-		};
-	} catch (error) {
-		return {
-			capabilities: defaultCapabilities
-		};
-	}
+		}
+	};
 });
 
 connection.onInitialized(() => {
-});
-
-connection.onDocumentSymbol((params) => {
-	if (!database) {
-		return null;
+	connection.workspace.onDidChangeWorkspaceFolders((event) => {
+		for (let folder of event.removed) {
+			workspaceFolderRemoved(folder);
+		}
+		for (let folder of event.added) {
+			workspaceFolderAdded(folder);
+		}
+	});
+	if (folders) {
+		for (let folder of folders) {
+			workspaceFolderAdded(folder);
+		}
 	}
-	return database.documentSymbols(getUri(params.textDocument));
 });
 
-connection.onFoldingRanges((params) => {
-	if (!database) {
-		return null;
+let _sortedWorkspaceFolders: string[] | undefined;
+function sortedWorkspaceFolders(): string[] {
+	if (_sortedWorkspaceFolders === void 0) {
+		_sortedWorkspaceFolders = [];
+		for (let folder of databases.keys()) {
+			_sortedWorkspaceFolders.push(folder);
+		}
+		_sortedWorkspaceFolders.sort(
+			(a, b) => {
+				return a.length - b.length;
+			}
+		);
 	}
-	return database.foldingRanges(getUri(params.textDocument));
-});
+	return _sortedWorkspaceFolders;
+}
 
-
-connection.onHover((params) => {
-	if (!database) {
-		return null;
+function findDatabase(uri: string): SipDatabase | undefined {
+	let sorted = sortedWorkspaceFolders();
+	if (uri.charAt(uri.length - 1) !== '/') {
+		uri = uri + '/';
 	}
-	return database.hover(getUri(params.textDocument), params.position);
-});
-
-connection.onDefinition((params) => {
-	if (!database) {
-		return null;
+	for (let element of sorted) {
+		if (uri.startsWith(element)) {
+			return databases.get(element);
+		}
 	}
-	return database.definitions(getUri(params.textDocument), params.position);
-});
+	return undefined;
+}
 
-connection.onReferences((params) => {
-	if (!database) {
-		return null;
+function getDatabaseKey(uri: string): string {
+	if (uri.charAt(uri.length - 1) !== '/') {
+		uri = uri + '/';
 	}
-	return database.references(getUri(params.textDocument), params.position, params.context);
-});
+	return uri;
+}
+
+async function workspaceFolderAdded(folder: WorkspaceFolder): Promise<void> {
+	let uri = URI.parse(folder.uri);
+	if (uri.scheme !== 'file') {
+		return;
+	}
+	let file = path.join(URI.parse(folder.uri).fsPath, 'lsif.json');
+	if (await exists(file)) {
+		try {
+			let database = new SipDatabase(file);
+			database.load();
+			databases.set(getDatabaseKey(uri.toString(true)), database);
+			_sortedWorkspaceFolders = undefined;
+			checkRegistrations();
+		} catch (err) {
+			const error = err as Error;
+			connection.console.error(`${error.message}\n${error.stack}`)
+		}
+	}
+}
+
+function workspaceFolderRemoved(folder: WorkspaceFolder): void {
+	let uri = URI.parse(folder.uri);
+	if (uri.scheme !== 'file:') {
+		return;
+	}
+	// Remove the data base.
+	databases.delete(getDatabaseKey(uri.toString(true)));
+	_sortedWorkspaceFolders = undefined;
+	checkRegistrations();
+}
+
+let registrations: Thenable<BulkUnregistration> | undefined;
+
+async function checkRegistrations(): Promise<void> {
+	if (databases.size === 0 && registrations !== undefined) {
+		registrations.then(unregister => unregister.dispose(), error => connection.console.error('Failed to unregister listeners.'));
+		registrations = undefined;
+		return;
+	}
+	if (databases.size >= 1 && registrations === undefined) {
+		let documentSelector: DocumentSelector = [
+			{ scheme: 'file', language: 'typescript' },
+			{ scheme: 'file', language: 'javascript' }
+		];
+		let toRegister: BulkRegistration = BulkRegistration.create();
+		toRegister.add(DocumentSymbolRequest.type, {
+			documentSelector
+		});
+		toRegister.add(FoldingRangeRequest.type, {
+			documentSelector
+		});
+		toRegister.add(HoverRequest.type, {
+			documentSelector
+		});
+		toRegister.add(DefinitionRequest.type, {
+			documentSelector
+		});
+		toRegister.add(ReferencesRequest.type, {
+			documentSelector
+		});
+		registrations = connection.client.register(toRegister);
+	}
+}
 
 function getUri(textDocument: TextDocumentIdentifier): string {
 	return URI.parse(textDocument.uri).toString(true);
 }
+
+function getDatabase(textDocument: TextDocumentIdentifier): [string, SipDatabase | undefined] {
+	let uri = getUri(textDocument);
+	return [uri, findDatabase(uri)];
+}
+
+connection.onDocumentSymbol((params) => {
+	let [uri, database] = getDatabase(params.textDocument);
+	if (!database) {
+		return null;
+	}
+	return database.documentSymbols(uri);
+});
+
+connection.onFoldingRanges((params) => {
+	let [uri, database] = getDatabase(params.textDocument);
+	if (!database) {
+		return null;
+	}
+	return database.foldingRanges(uri);
+});
+
+
+connection.onHover((params) => {
+	let [uri, database] = getDatabase(params.textDocument);
+	if (!database) {
+		return null;
+	}
+	return database.hover(uri, params.position);
+});
+
+connection.onDefinition((params) => {
+	let [uri, database] = getDatabase(params.textDocument);
+	if (!database) {
+		return null;
+	}
+	return database.definitions(uri, params.position);
+});
+
+connection.onReferences((params) => {
+	let [uri, database] = getDatabase(params.textDocument);
+	if (!database) {
+		return null;
+	}
+	return database.references(uri, params.position, params.context);
+});
 
 connection.listen();
