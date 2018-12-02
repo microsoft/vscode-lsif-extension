@@ -20,7 +20,7 @@ let client: LanguageClient;
 export function activate(context: ExtensionContext) {
 	// The server is implemented in node
 	let serverModule = context.asAbsolutePath(
-		path.join('server', 'out', 'sipServer.js')
+		path.join('server', 'out', 'lsifServer.js')
 	);
 	// The debug options for the server
 	// --inspect=6019: runs the server in Node's Inspector mode so VS Code can attach to the server for debugging
@@ -41,8 +41,8 @@ export function activate(context: ExtensionContext) {
 	let clientOptions: LanguageClientOptions = {
 		// Register the server for plain text documents
 		documentSelector: [
-			{ scheme: 'file', language: 'typescript' /*, exclusive: true */ }  as DocumentFilter,
-			{ scheme: 'file', language: 'javascript' /*, exclusive: true */ }  as DocumentFilter
+			{ scheme: 'file', language: 'typescript', exclusive: true  }  as DocumentFilter,
+			{ scheme: 'file', language: 'javascript', exclusive: true  }  as DocumentFilter,
 		],
 		synchronize: {
 			// Notify the server about file changes to '.clientrc files contained in the workspace

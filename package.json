@@ -23,6 +23,7 @@
 		"onLanguage:javascript",
 		"onLanguage:typescript"
 	],
+	"enableProposedApi": true,
 	"main": "./client/out/extension",
 	"contributes": {
 		"configuration": {

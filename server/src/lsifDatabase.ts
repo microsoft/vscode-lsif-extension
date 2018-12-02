@@ -51,7 +51,7 @@ interface ResolvedReferenceResult {
 	referenceResults: ReferenceResult[];
 }
 
-export class SipDatabase {
+export class LsifDatabase {
 
 	private version: string | undefined;
 	private vertices: Vertices;
@@ -471,11 +471,11 @@ export class SipDatabase {
 				continue;
 			}
 			let range = item;
-			if (SipDatabase.containsPosition(range, position)) {
+			if (LsifDatabase.containsPosition(range, position)) {
 				if (!candidate) {
 					candidate = item;
 				} else {
-					if (SipDatabase.containsRange(candidate, range)) {
+					if (LsifDatabase.containsRange(candidate, range)) {
 						candidate = item;
 					}
 				}

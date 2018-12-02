@@ -13,12 +13,12 @@ const exists = promisify(fs.exists);
 import URI from 'vscode-uri';
 import { createConnection, ProposedFeatures, InitializeParams, TextDocumentSyncKind, WorkspaceFolder, ServerCapabilities, TextDocument, TextDocumentPositionParams, TextDocumentIdentifier, BulkUnregistration, BulkRegistration, DocumentSymbolRequest, DocumentSelector, FoldingRangeRequest, HoverRequest, DefinitionRequest, ReferencesRequest } from 'vscode-languageserver';
 
-import { SipDatabase } from './sipDatabase';
+import { LsifDatabase } from './lsifDatabase';
 
 // Create a connection for the server. The connection uses Node's IPC as a transport.
 // Also include all preview / proposed LSP features.
 let connection = createConnection(ProposedFeatures.all);
-let databases: Map<string, SipDatabase> = new Map();
+let databases: Map<string, LsifDatabase> = new Map();
 let folders: WorkspaceFolder[] | null;
 
 connection.onInitialize((params: InitializeParams) => {
@@ -69,7 +69,7 @@ function sortedWorkspaceFolders(): string[] {
 	return _sortedWorkspaceFolders;
 }
 
-function findDatabase(uri: string): SipDatabase | undefined {
+function findDatabase(uri: string): LsifDatabase | undefined {
 	let sorted = sortedWorkspaceFolders();
 	if (uri.charAt(uri.length - 1) !== '/') {
 		uri = uri + '/';
@@ -97,7 +97,7 @@ async function workspaceFolderAdded(folder: WorkspaceFolder): Promise<void> {
 	let file = path.join(URI.parse(folder.uri).fsPath, 'lsif.json');
 	if (await exists(file)) {
 		try {
-			let database = new SipDatabase(file);
+			let database = new LsifDatabase(file);
 			database.load();
 			databases.set(getDatabaseKey(uri.toString(true)), database);
 			_sortedWorkspaceFolders = undefined;
@@ -130,8 +130,8 @@ async function checkRegistrations(): Promise<void> {
 	}
 	if (databases.size >= 1 && registrations === undefined) {
 		let documentSelector: DocumentSelector = [
-			{ scheme: 'file', language: 'typescript' },
-			{ scheme: 'file', language: 'javascript' }
+			{ scheme: 'file', language: 'typescript', exclusive: true } as any,
+			{ scheme: 'file', language: 'javascript', exclusive: true } as any
 		];
 		let toRegister: BulkRegistration = BulkRegistration.create();
 		toRegister.add(DocumentSymbolRequest.type, {
@@ -157,7 +157,7 @@ function getUri(textDocument: TextDocumentIdentifier): string {
 	return URI.parse(textDocument.uri).toString(true);
 }
 
-function getDatabase(textDocument: TextDocumentIdentifier): [string, SipDatabase | undefined] {
+function getDatabase(textDocument: TextDocumentIdentifier): [string, LsifDatabase | undefined] {
 	let uri = getUri(textDocument);
 	return [uri, findDatabase(uri)];
 }
