@@ -1,5 +1,5 @@
 {
-	"name": "vscode-lsif-server",
+	"name": "vscode-lsif-client",
 	"description": "VSCode Language Server Index Format client",
 	"author": "Microsoft Corporation",
 	"license": "MIT",
