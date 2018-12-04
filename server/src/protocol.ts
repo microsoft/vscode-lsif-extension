@@ -6,19 +6,10 @@
 
 import * as lsp from 'vscode-languageserver-protocol';
 
-import * as Is from './is';
-
 /**
  * An `Id` to identify a vertex or an edge.
  */
 export type Id = number | string;
-
-export namespace Id {
-	export function is(value: any): value is Id {
-		let candidate: Id = value;
-		return candidate !== undefined && candidate !== null && (Is.string(value) || Is.number(value));
-	}
-}
 
 /**
  * An element in the graph.
@@ -34,9 +25,14 @@ export interface Element {
 export type VertexLiterals =
 	'metaData' |
 	'project' |
-	'document' |
-	'resultSet' |
 	'range' |
+	'location' |
+	'document' |
+	'externalImportItem' |
+	'externalImportResult' |
+	'exportItem' |
+	'exportResult' |
+	'resultSet' |
 	'documentSymbolResult' |
 	'foldingRangeResult' |
 	'documentLinkResult' |
@@ -108,13 +104,6 @@ export interface DeclarationTag {
 	 * Optional detail information for the declaration.
 	 */
 	detail?: string;
-
-	/**
-	 * A position independent key to identify the result set in a project. For most
-	 * languages this can only be computed for exported (API) symbols and is therefore
-	 * optional.
-	 */
-	moniker?: { local: boolean, value: string };
 }
 
 /**
@@ -151,13 +140,6 @@ export interface DefinitionTag {
 	 * Optional detail information for the definition.
 	 */
 	detail?: string;
-
-	/**
-	 * A position independent key to identify the result set in a project. For most
-	 * languages this can only be computed for exported (API) symbols and is therefore
-	 * optional.
-	 */
-	moniker?: { local: boolean, value: string };
 }
 
 /**
@@ -260,6 +242,23 @@ export interface ReferenceRange extends Range {
 }
 
 /**
+ * A location emittable in LSIF. It has no uri since
+ * like ranges locations should be connected to a document
+ * using a `contains`edge.
+ */
+export interface Location extends V {
+	/**
+	 * The label property.
+	 */
+	label: 'location';
+
+	/**
+	 * The location's range
+	 */
+	range: lsp.Range;
+}
+
+/**
  * The meta data vertex.
  */
 export interface MetaData extends V {
@@ -275,6 +274,19 @@ export interface MetaData extends V {
 	version: string;
 }
 
+
+export type AdditionDataValueType = string | number | boolean | string[] | number[] | boolean[];
+export interface AdditionalData {
+	[key: string]: AdditionDataValueType | AdditionalData | AdditionalData[];
+}
+
+/**
+ * A document tag allows Indexers to tag documents for special
+ * purposes
+ */
+export interface ProjectData extends AdditionalData {
+}
+
 /**
  * A project vertex.
  */
@@ -284,11 +296,6 @@ export interface Project extends V {
 	 * The label property.
 	 */
 	label: 'project';
-
-	/**
-	 * The project name
-	 */
-	name: string;
 
 	/**
 	 * The project kind like 'typescript' or 'csharp'. See also the language ids
@@ -302,22 +309,24 @@ export interface Project extends V {
 	resource?: Uri;
 
 	/**
+	 * Optional project data specific to the programming language.
+	 */
+	data?: ProjectData;
+
+	/**
 	 * Optional the content of the project file, `base64` encoded.
 	 */
 	contents?: string;
 }
 
-export interface RepositoryInformation {
-	/**
-	 * The repository type. For example git, tfs, ...
-	 */
-	type: string;
-
-	/**
-	 * The repository url.
-	 */
-	url: string;
+/**
+ * A document tag allows Indexers to tag documents for special
+ * purposes
+ */
+export interface DocumentData extends AdditionalData {
 }
+
+export type DocumentId = Id;
 
 /**
  * A vertex representing a document in the project
@@ -341,9 +350,90 @@ export interface Document extends V {
 	languageId: string;
 
 	/**
+	 * Optional document data specific to the programming language.
+	 */
+	data?: DocumentData;
+
+	/**
 	 * Optional the content of the document, `based64` encoded
 	 */
 	contents?: string;
+}
+
+export namespace inline {
+
+	export interface ExternalImportItem {
+		/**
+		 * A position independent handle to identify a range in a document.
+		 */
+		moniker: string;
+
+		/**
+		 * The range ids this moniker refers to.
+		 */
+		rangeIds: RangeId[];
+	}
+
+	export interface ExportItem {
+		/**
+		 * A position independent handle to identify a range in a document.
+		 */
+		moniker: string;
+
+		/**
+		 * The range ids this moniker refers to.
+		 */
+		rangeIds: RangeId[];
+	}
+}
+
+/**
+ * An item in the external export result.
+ */
+export interface ExternalImportItem extends inline.ExternalImportItem, V {
+
+	label: 'externalImportItem';
+}
+
+export type ExternalImportResultId = Id;
+
+/**
+ * The imported items of a document. The imported items can either
+ * be inlined or added to the import result using an item edge.
+ */
+export interface ExternalImportResult extends V {
+
+	label: 'externalImportResult';
+
+	/**
+	 * The result when inlined.
+	 */
+	result?: inline.ExternalImportItem[];
+}
+
+
+/**
+ * An item in a export result.
+ */
+export interface ExportItem extends inline.ExportItem, V {
+
+	label: 'exportItem';
+}
+
+export type ExportResultId = Id;
+
+/**
+ * The exported items of a document. The export items can either
+ * be inlined or added to the export result using an item edge.
+ */
+export interface ExportResult extends V {
+
+	label: 'exportResult';
+
+	/**
+	 * The result when inlined.
+	 */
+	result?: inline.ExportItem[];
 }
 
 /**
@@ -574,6 +664,10 @@ export type Vertex =
 	MetaData |
 	Project |
 	Document |
+	ExternalImportItem |
+	ExternalImportResult |
+	ExportItem |
+	ExportResult |
 	ResultSet |
 	Range |
 	DocumentSymbolResult |
@@ -594,7 +688,8 @@ export type EdgeLiterals =
 	'contains' |
 	'item' |
 	'refersTo' |
-	'dependsOn' |
+	'exports' |
+	'imports' |
 	'textDocument/documentSymbol' |
 	'textDocument/foldingRange' |
 	'textDocument/documentLink' |
@@ -630,7 +725,7 @@ export interface E<S extends V, T extends V, K extends EdgeLiterals> extends Ele
 }
 
 export interface ItemEdge<S extends V, T extends V> extends E<S, T, 'item'> {
-	property: string;
+	property?: string;
 }
 
 /**
@@ -643,19 +738,35 @@ export interface ItemEdge<S extends V, T extends V> extends E<S, T, 'item'> {
 export type contains = E<Project, Document, 'contains'> | E<Document, Range, 'contains'>;
 
 /**
- * An edge associating a range with a Sip Item. The relationship exists between:
+ * An edge associating a range with a result set. The relationship exists between:
  *
  * - `Range` -> `ResultSet`
  */
 export type refersTo = E<Range, ResultSet, 'refersTo'>;
 
 /**
+ * An edge associating a export result with a document. The relationship exists between:
+ *
+ * - `Document` -> `ExportResult`
+ */
+export type $exports = E<Document, ExportResult, 'exports'>;
+
+/**
+ * An edge associating a external import result with a document. The relationship exists between:
+ *
+ * - `Document` -> `ExternalImportResult`
+ */
+export type $imports = E<Document, ExternalImportResult, 'imports'>;
+
+/**
  * An edge representing a item in a result set. The relationship exists between:
  *
  * - `ReferenceResult` -> `Range`
  * - `ReferenceResult` -> `ReferenceResult`
+ * - `ExportResult` -> `ExportResultItem`
+ * - `ExternalImportResult` -> `ExternalImportItem`
  */
-export type item = ItemEdge<ReferenceResult, Range> | ItemEdge<ReferenceResult, ReferenceResult>;
+export type item = ItemEdge<ReferenceResult, Range> | ItemEdge<ReferenceResult, ReferenceResult> | ItemEdge<ExportResult, ExportItem> | ItemEdge<ExternalImportResult, ExternalImportItem>;
 
 /**
  * An edge representing a `textDocument/documentSymbol` releationship. The relationship exists between:
@@ -742,6 +853,8 @@ export type Edge =
 	contains |
 	item |
 	refersTo |
+	$exports |
+	$imports |
 	textDocument_documentSymbol |
 	textDocument_foldingRange |
 	textDocument_documentLink |
