@@ -300,7 +300,7 @@ export class LsifDatabase {
 			return undefined;
 		}
 
-		let hoverRange = hoverResult.result.range === '${startRange}' ? range : hoverResult.result.range;
+		let hoverRange = hoverResult.result.range !== undefined ? hoverResult.result.range : range;
 		return {
 			contents: hoverResult.result.contents,
 			range: hoverRange
