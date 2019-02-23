@@ -11,7 +11,7 @@ import * as fs from 'fs';
 const exists = promisify(fs.exists);
 
 import URI from 'vscode-uri';
-import { createConnection, ProposedFeatures, InitializeParams, TextDocumentSyncKind, WorkspaceFolder, ServerCapabilities, TextDocument, TextDocumentPositionParams, TextDocumentIdentifier, BulkUnregistration, BulkRegistration, DocumentSymbolRequest, DocumentSelector, FoldingRangeRequest, HoverRequest, DefinitionRequest, ReferencesRequest } from 'vscode-languageserver';
+import { createConnection, ProposedFeatures, InitializeParams, TextDocumentSyncKind, WorkspaceFolder, TextDocumentIdentifier, BulkUnregistration, BulkRegistration, DocumentSymbolRequest, DocumentSelector, FoldingRangeRequest, HoverRequest, DefinitionRequest, ReferencesRequest } from 'vscode-languageserver';
 
 import { LsifDatabase } from './lsifDatabase';
 
@@ -26,7 +26,7 @@ connection.onInitialize((params: InitializeParams) => {
 	folders = params.workspaceFolders;
 	return {
 		capabilities: {
-			textDocumentSync: TextDocumentSyncKind.None,
+			textDocumentSync: TextDocumentSyncKind.Incremental,
 			workspace: {
 				workspaceFolders: {
 					supported: true,
@@ -198,9 +198,19 @@ connection.onDefinition((params) => {
 connection.onReferences((params) => {
 	let [uri, database] = getDatabase(params.textDocument);
 	if (!database) {
+
 		return null;
 	}
 	return database.references(uri, params.position, params.context);
 });
+
+
+connection.onDidChangeTextDocument((params) => {
+	let [uri, database] = getDatabase(params.textDocument);
+	if (!database) {
+		return null;
+	}
+	return database.updateLocations(uri, params.contentChanges);
+})
 
 connection.listen();
