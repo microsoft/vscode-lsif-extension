@@ -18,6 +18,7 @@ interface Vertices {
 	ranges: Map<Id, Range>;
 }
 
+type PositionUpdater = (position: lsp.Position) => lsp.Position | null;
 type ItemTarget = { type: 'declaration'; range: Range } | { type: 'definition'; range: Range } | { type: 'reference'; range: Range } | { type: 'referenceResult'; result: ReferenceResult };
 
 interface Out {
@@ -58,6 +59,12 @@ export class LsifDatabase {
 	private indices: Indices;
 	private out: Out;
 	private in: In;
+
+	// Used to convert incoming positions into positions in the unedited document
+	private newToOld : PositionUpdater = function(s){return s;};
+	// Used to convert outgoing positions into positions in the edited document
+	private oldToNew : PositionUpdater  = function(s){return s;};
+
 
 	constructor(private file: string) {
 		this.vertices = {
@@ -281,11 +288,16 @@ export class LsifDatabase {
 		if (Array.isArray(definitionResult.result)) {
 			let result: lsp.Location[] = [];
 			for (let element of definitionResult.result) {
-				result.push(this.asLocation(element));
+				this.pushIfValidLocation(result, this.asLocation(element));
 			}
 			return result;
 		} else {
-			return this.asLocation(definitionResult.result);
+			let res = this.oldLocToNewLoc(this.asLocation(definitionResult.result));
+			if (res == null){
+				return undefined;
+			} else {
+				return res;
+			}
 		}
 	}
 
@@ -319,6 +331,33 @@ export class LsifDatabase {
 		}
 
 		return this.asReferenceResult(referenceResult, context, new Set());
+	}
+
+	public updateLocations(uri : string, changes : lsp.TextDocumentContentChangeEvent[]) {
+		let new_update_forwards = function(p: lsp.Position | null){
+			return (changes.reduce(LsifDatabase.updatePosition("forward"), p))};
+
+		let new_update_backwards = function(p: lsp.Position | null){
+			return (changes.reduce(LsifDatabase.updatePosition("backwards"), p))};
+
+		let prev_newToOld = this.newToOld;
+
+		this.newToOld = function(p: lsp.Position){ let new_pos = new_update_forwards(p);
+										  if (new_pos == null){
+											  return null;
+										  } else {
+											  return prev_newToOld(new_pos);
+										  }};
+
+		let prev_oldToNew = this.oldToNew;
+
+		this.oldToNew = function(p: lsp.Position){ let new_pos = prev_oldToNew(p);
+						  if (new_pos == null){
+							  return null;
+						  } else {
+							  return new_update_backwards(new_pos);
+						  }};
+		return null;
 	}
 
 	private getResult<T>(range: Range, edges: Map<Id, T>): T | undefined {
@@ -363,6 +402,23 @@ export class LsifDatabase {
 			}
 		}
 		return result;
+	}
+	// Convert an old location to a new location and push the result if its still valid.
+	private pushIfValidLocation(array : lsp.Location[], old_loc : lsp.Location) {
+		let new_loc = this.oldLocToNewLoc(old_loc);
+		if (new_loc != null){
+			array.push(new_loc);
+		}
+	}
+
+	private oldLocToNewLoc (old_loc : lsp.Location) : lsp.Location | null {
+		let new_start = this.oldToNew(old_loc.range.start);
+		let new_end   = this.oldToNew(old_loc.range.end);
+		if (new_start == null || new_end == null){
+			return null;
+		} else {
+			return (lsp.Location.create(old_loc.uri, { start : new_start, end : new_end }));
+		}
 	}
 
 	private resolveReferenceResult(value: ReferenceResult, includeDeclaration: boolean): ResolvedReferenceResult {
@@ -450,12 +506,18 @@ export class LsifDatabase {
 				return;
 			}
 			let document = this.in.contains.get(value.id)!;
-			result.push(lsp.Location.create((document as Document).uri, this.asRange(value)));
+			let loc = lsp.Location.create((document as Document).uri, this.asRange(value));
+			this.pushIfValidLocation(result, loc);
+			result.push();
 			dedup.add(value.id);
 		}
 	}
 
-	private findRangeFromPosition(file: string, position: lsp.Position): Range | undefined {
+	private findRangeFromPosition(file: string, position_new: lsp.Position): Range | undefined {
+		let position = this.newToOld(position_new);
+		if (position == null){
+			return undefined;
+		}
 		let document = this.indices.documents.get(file);
 		if (document === void 0) {
 			return undefined;
@@ -538,4 +600,87 @@ export class LsifDatabase {
 		}
 		return true;
 	}
+	// This function tries to map positions in the database to new positions in an edited document.
+	// It was implemented in Haskell by Zubin Duggal and Luke Lau.
+	// https://github.com/haskell/haskell-ide-engine/blob/master/src/Haskell/Ide/Engine/Transport/LspStdio.hs#L268
+	private static updatePosition (dir: String) : (p : lsp.Position | null, ce : lsp.TextDocumentContentChangeEvent) => lsp.Position | null {
+		return function update_position(p : lsp.Position | null, ce : lsp.TextDocumentContentChangeEvent) : lsp.Position | null {
+
+		if (p == null){
+			return null;
+		}
+		// Pattern matching on the arguments
+		let l = p.line;
+		let c = p.character;
+
+		let sl = ce.range!.start.line;
+		let sc = ce.range!.start.character;
+
+		let el = ce.range!.end.line;
+		let ec = ce.range!.end.character;
+
+		// Where clause
+		let txt = ce.text;
+		let oldL = el - sl;
+		let lines = txt.split("\n");
+		let newL = lines.length - 1;
+		let nec = (newL == 0 ) ? sc + txt.length : lines[lines.length - 1].length;
+
+		let plusMinus = function (x : number, y : number) { return (dir == "forward" ? x - y : x + y); };
+
+		let dl = newL - oldL;
+		let l1 = plusMinus(l, dl);
+
+		// pos is before the change - unaffected
+		if (l < sl) { return p; };
+		//  pos is somewhere after the changed line,
+		//  move down the pos to keep it the same
+		if (l > el) { p.line = l1;
+					  return p; };
+		//
+		//	LEGEND:
+		//	0-9   char index
+		//	x     untouched char
+		//	I/i   inserted/replaced char
+		//	.     deleted char
+		//	^     pos to be converted
+		//
+		//
+		//
+		//	012345  67
+		//	xxxxxx  xx
+		//	 ^
+		//	0123456789
+		//	xxIIIIiixx
+		//	 ^
+		//	pos is unchanged if before the edited range
+
+		if (l == sl && c <= sc) {
+			return p; };
+
+		//	01234  56
+		//  xxxxx  xx
+		//	  ^
+		//	012345678
+		//	xxIIIiixx
+		//		   ^
+		//	If pos is in the affected range move to after the range
+		if (l == sl && l == el && c <= nec && newL == 0)
+			{ p.character = ec;
+			  return p; };
+		//
+		//	01234  56
+		//	xxxxx  xx
+		//		   ^
+		//	012345678
+		//	xxIIIiixx
+		//		   ^
+		//	If pos is after the affected range, update the char index
+		//	to keep it in the same place
+		if (l == sl && l == el && c > nec && newL == 0)
+			{ p.character = plusMinus (c, (nec - sc));
+			  return p;}
+		// Oh well, we tried but we can't work out where the range came from.
+		return null;
+	}}
 }
