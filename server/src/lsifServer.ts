@@ -32,7 +32,9 @@ connection.onInitialize((params: InitializeParams) => {
 					supported: true,
 					changeNotifications: true
 				}
-			}
+			}, 
+			implementationProvider: true, 
+			typeDefinitionProvider: true,
 		}
 	};
 });
@@ -130,8 +132,7 @@ async function checkRegistrations(): Promise<void> {
 	}
 	if (databases.size >= 1 && registrations === undefined) {
 		let documentSelector: DocumentSelector = [
-			{ scheme: 'file', language: 'typescript', exclusive: true } as any,
-			{ scheme: 'file', language: 'javascript', exclusive: true } as any
+			{ scheme: 'file', language: 'java', exclusive: true } as any
 		];
 		let toRegister: BulkRegistration = BulkRegistration.create();
 		toRegister.add(DocumentSymbolRequest.type, {
@@ -195,12 +196,28 @@ connection.onDefinition((params) => {
 	return database.definitions(uri, params.position);
 });
 
+connection.onTypeDefinition((params) => {
+	let [uri, database] = getDatabase(params.textDocument);
+	if (!database) {
+		return null;
+	}
+	return database.typeDefinitions(uri, params.position);
+});
+
 connection.onReferences((params) => {
 	let [uri, database] = getDatabase(params.textDocument);
 	if (!database) {
 		return null;
 	}
 	return database.references(uri, params.position, params.context);
+});
+
+connection.onImplementation((params) => {
+	let [uri, database] = getDatabase(params.textDocument);
+	if (!database) {
+		return null;
+	}
+	return database.implementations(uri, params.position);
 });
 
 connection.listen();

@@ -202,6 +202,9 @@ export class LsifDatabase {
 			case 'textDocument/references':
 				this.out.references.set(from.id, to as ReferenceResult);
 				break;
+			case 'textDocument/implementation':
+				this.out.implementation.set(from.id, to as ImplementationResult);
+				break;
 		}
 	}
 
@@ -289,6 +292,26 @@ export class LsifDatabase {
 		}
 	}
 
+	public typeDefinitions(uri: string, position: lsp.Position): lsp.Location | lsp.Location[] | undefined {
+		let range = this.findRangeFromPosition(uri, position);
+		if (range === void 0) {
+			return undefined;
+		}
+		let typeDefinitionResult: TypeDefinitionResult | undefined = this.getResult(range, this.out.typeDefinition);
+		if (typeDefinitionResult === void 0) {
+			return undefined;
+		}
+		if (Array.isArray(typeDefinitionResult.result)) {
+			let result: lsp.Location[] = [];
+			for (let element of typeDefinitionResult.result) {
+				result.push(this.asLocation(element));
+			}
+			return result;
+		} else {
+			return this.asLocation(typeDefinitionResult.result);
+		}
+	}
+
 	public hover(uri: string, position: lsp.Position): lsp.Hover | undefined {
 		let range = this.findRangeFromPosition(uri, position);
 		if (range === void 0) {
@@ -319,6 +342,32 @@ export class LsifDatabase {
 		}
 
 		return this.asReferenceResult(referenceResult, context, new Set());
+	}
+
+
+	public implementations(uri: string, position: lsp.Position): lsp.Location[] | undefined {
+		let range = this.findRangeFromPosition(uri, position);
+		if (range === void 0) {
+			return undefined;
+		}
+		
+		let result: lsp.Location[] = [];
+		let implementationResult: ImplementationResult | undefined = this.getResult(range, this.out.implementation);
+		if (implementationResult && implementationResult.result !== void 0) {
+			const dedup = new Set();
+			implementationResult.result.forEach((val) => {
+				if (lsp.Location.is(val)) {
+					result.push(val);
+				} else {
+					let r  = this.vertices.ranges.get(val);
+					if (r) {
+						this.addLocation(result, r, dedup);
+					}
+				}
+				
+			});
+		}
+		return result;
 	}
 
 	private getResult<T>(range: Range, edges: Map<Id, T>): T | undefined {
