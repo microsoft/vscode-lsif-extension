@@ -11,7 +11,7 @@ import * as fs from 'fs';
 const exists = promisify(fs.exists);
 
 import URI from 'vscode-uri';
-import { createConnection, ProposedFeatures, InitializeParams, TextDocumentSyncKind, WorkspaceFolder, ServerCapabilities, TextDocument, TextDocumentPositionParams, TextDocumentIdentifier, BulkUnregistration, BulkRegistration, DocumentSymbolRequest, DocumentSelector, FoldingRangeRequest, HoverRequest, DefinitionRequest, ReferencesRequest } from 'vscode-languageserver';
+import { createConnection, ProposedFeatures, InitializeParams, WorkspaceFolder, TextDocumentIdentifier, BulkUnregistration, BulkRegistration, DocumentSymbolRequest, DocumentSelector, FoldingRangeRequest, HoverRequest, DefinitionRequest, ReferencesRequest, Diagnostic } from 'vscode-languageserver';
 
 import { LsifDatabase } from './lsifDatabase';
 
@@ -26,7 +26,9 @@ connection.onInitialize((params: InitializeParams) => {
 	folders = params.workspaceFolders;
 	return {
 		capabilities: {
-			textDocumentSync: TextDocumentSyncKind.None,
+			textDocumentSync: {
+				openClose: true
+			},
 			workspace: {
 				workspaceFolders: {
 					supported: true,
@@ -179,7 +181,6 @@ connection.onFoldingRanges((params) => {
 	return database.foldingRanges(uri);
 });
 
-
 connection.onHover((params) => {
 	let [uri, database] = getDatabase(params.textDocument);
 	if (!database) {
@@ -218,6 +219,21 @@ connection.onImplementation((params) => {
 		return null;
 	}
 	return database.implementations(uri, params.position);
+});
+
+connection.onDidOpenTextDocument((params) => {
+	let [uri, database] = getDatabase(params.textDocument);
+	if (!database) {
+		return null;
+	}
+	const diagnostics: Diagnostic[] | undefined = database.diagnostics(uri);
+	if (!diagnostics) {
+		return null;
+	}
+	connection.sendDiagnostics({
+		uri: uri,
+		diagnostics
+	});
 });
 
 connection.listen();

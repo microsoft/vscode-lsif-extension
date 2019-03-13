@@ -250,6 +250,18 @@ export class LsifDatabase {
 		return result;
 	}
 
+	public diagnostics(uri: string): lsp.Diagnostic[] | undefined {
+		let document = this.indices.documents.get(uri);
+		if (document === void 0) {
+			return undefined;
+		}
+		let diagnosticResult = this.out.diagnostic.get(document.id);
+		if (diagnosticResult === void 0 || diagnosticResult.result.length === 0) {
+			return undefined;
+		}
+		return diagnosticResult.result;
+	}
+
 	private toDocumentSymbol(value: RangeBasedDocumentSymbol): lsp.DocumentSymbol | undefined {
 		let range = this.vertices.ranges.get(value.id)!;
 		let tag = range.tag;
