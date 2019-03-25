@@ -11,19 +11,83 @@ import * as fs from 'fs';
 const exists = promisify(fs.exists);
 
 import URI from 'vscode-uri';
-import { createConnection, ProposedFeatures, InitializeParams, TextDocumentSyncKind, WorkspaceFolder, ServerCapabilities, TextDocument, TextDocumentPositionParams, TextDocumentIdentifier, BulkUnregistration, BulkRegistration, DocumentSymbolRequest, DocumentSelector, FoldingRangeRequest, HoverRequest, DefinitionRequest, ReferencesRequest } from 'vscode-languageserver';
+import { createConnection, ProposedFeatures, InitializeParams, TextDocumentSyncKind, WorkspaceFolder, ServerCapabilities, TextDocument, TextDocumentPositionParams, TextDocumentIdentifier, BulkUnregistration, BulkRegistration, DocumentSymbolRequest, DocumentSelector, FoldingRangeRequest, HoverRequest, DefinitionRequest, ReferencesRequest, RequestType } from 'vscode-languageserver';
 
-import { LsifDatabase } from './lsifDatabase';
+import { Database } from './database';
+import { JsonDatabase } from './json';
+import { SqliteDatabase } from './sqlite';
+import { FileType } from './files';
+
+interface ReadFileParams {
+	database: string;
+	uri: string;
+}
+
+namespace ReadFileRequest {
+	export const type = new RequestType<ReadFileParams, string, void, void>('lsif/readfile');
+}
+
+interface ReadDirectoryParams {
+	database: string;
+	uri: string;
+}
+
+namespace ReadDirectoryRequest {
+	export const type = new RequestType<ReadDirectoryParams, [string, FileType][], void, void>('lsif/readDirectory');
+}
+
+interface LoadDatabaseParams {
+	uri: string;
+}
+
+interface LoadDatabaseResult {
+	projectRoot: string;
+}
+
+namespace LoadDatabase {
+	export const type = new RequestType<LoadDatabaseParams, LoadDatabaseResult, void, void>('lisf/loadDatabase');
+}
+
+
+let databases: Map<string, Database> = new Map();
+
+let _sortedDatabaseKeys: string[] | undefined;
+function sortedDatabaseKeys(): string[] {
+	if (_sortedDatabaseKeys === undefined) {
+		_sortedDatabaseKeys = [];
+		for (let key of databases.keys()) {
+			_sortedDatabaseKeys.push(key);
+		}
+		_sortedDatabaseKeys.sort(
+			(a, b) => {
+				return a.length - b.length;
+			}
+		);
+	}
+	return _sortedDatabaseKeys;
+}
+
+function getDatabaseKey(uri: string): string {
+	return uri.charAt(uri.length - 1) !== '/' ? `${uri}/` : uri;
+}
+
+function findDatabase(uri: string): Database | undefined {
+	let sorted = sortedDatabaseKeys();
+	if (uri.charAt(uri.length - 1) !== '/') {
+		uri = uri + '/';
+	}
+	for (let element of sorted) {
+		if (uri.startsWith(element)) {
+			return databases.get(element);
+		}
+	}
+	return undefined;
+}
 
 // Create a connection for the server. The connection uses Node's IPC as a transport.
 // Also include all preview / proposed LSP features.
 let connection = createConnection(ProposedFeatures.all);
-let databases: Map<string, LsifDatabase> = new Map();
-let folders: WorkspaceFolder[] | null;
-
 connection.onInitialize((params: InitializeParams) => {
-
-	folders = params.workspaceFolders;
 	return {
 		capabilities: {
 			textDocumentSync: TextDocumentSyncKind.None,
@@ -37,91 +101,45 @@ connection.onInitialize((params: InitializeParams) => {
 	};
 });
 
-connection.onInitialized(() => {
-	connection.workspace.onDidChangeWorkspaceFolders((event) => {
-		for (let folder of event.removed) {
-			workspaceFolderRemoved(folder);
-		}
-		for (let folder of event.added) {
-			workspaceFolderAdded(folder);
-		}
-	});
-	if (folders) {
-		for (let folder of folders) {
-			workspaceFolderAdded(folder);
-		}
+connection.onRequest(LoadDatabase.type, async (params) => {
+	const uri: URI = URI.parse(params.uri);
+	const fsPath = uri.fsPath;
+	const extName = path.extname(fsPath);
+	let database: Database | undefined;
+	if (extName === '.db') {
+		database = new SqliteDatabase(fsPath);
+	} else if (extName === '.json') {
+		database = new JsonDatabase(fsPath);
 	}
+	if (database === undefined) {
+		throw new Error(`No database found for ${fsPath}`);
+	}
+	database.load();
+	let projectRoot = database.getProjectRoot();
+	databases.set(getDatabaseKey(projectRoot), database);
+	await checkRegistrations();
+	return {
+		projectRoot: database.getProjectRoot()
+	};
 });
 
-let _sortedWorkspaceFolders: string[] | undefined;
-function sortedWorkspaceFolders(): string[] {
-	if (_sortedWorkspaceFolders === void 0) {
-		_sortedWorkspaceFolders = [];
-		for (let folder of databases.keys()) {
-			_sortedWorkspaceFolders.push(folder);
-		}
-		_sortedWorkspaceFolders.sort(
-			(a, b) => {
-				return a.length - b.length;
-			}
-		);
+connection.onRequest(ReadDirectoryRequest.type, (params) => {
+	let database = findDatabase(params.uri);
+	if (database === undefined) {
+		return [];
 	}
-	return _sortedWorkspaceFolders;
-}
+	return database.readDirectory(params.uri);
+});
 
-function findDatabase(uri: string): LsifDatabase | undefined {
-	let sorted = sortedWorkspaceFolders();
-	if (uri.charAt(uri.length - 1) !== '/') {
-		uri = uri + '/';
+connection.onRequest(ReadFileRequest.type, (params) => {
+	let database = findDatabase(params.uri);
+	if (database === undefined) {
+		return '';
 	}
-	for (let element of sorted) {
-		if (uri.startsWith(element)) {
-			return databases.get(element);
-		}
-	}
-	return undefined;
-}
-
-function getDatabaseKey(uri: string): string {
-	if (uri.charAt(uri.length - 1) !== '/') {
-		uri = uri + '/';
-	}
-	return uri;
-}
-
-async function workspaceFolderAdded(folder: WorkspaceFolder): Promise<void> {
-	let uri = URI.parse(folder.uri);
-	if (uri.scheme !== 'file') {
-		return;
-	}
-	let file = path.join(URI.parse(folder.uri).fsPath, 'lsif.json');
-	if (await exists(file)) {
-		try {
-			let database = new LsifDatabase(file);
-			database.load();
-			databases.set(getDatabaseKey(uri.toString(true)), database);
-			_sortedWorkspaceFolders = undefined;
-			checkRegistrations();
-		} catch (err) {
-			const error = err as Error;
-			connection.console.error(`${error.message}\n${error.stack}`)
-		}
-	}
-}
-
-function workspaceFolderRemoved(folder: WorkspaceFolder): void {
-	let uri = URI.parse(folder.uri);
-	if (uri.scheme !== 'file:') {
-		return;
-	}
-	// Remove the data base.
-	databases.delete(getDatabaseKey(uri.toString(true)));
-	_sortedWorkspaceFolders = undefined;
-	checkRegistrations();
-}
+	return database.readFileContent(params.uri);
+});
 
 let registrations: Thenable<BulkUnregistration> | undefined;
-
 async function checkRegistrations(): Promise<void> {
 	if (databases.size === 0 && registrations !== undefined) {
 		registrations.then(unregister => unregister.dispose(), error => connection.console.error('Failed to unregister listeners.'));
@@ -130,8 +148,7 @@ async function checkRegistrations(): Promise<void> {
 	}
 	if (databases.size >= 1 && registrations === undefined) {
 		let documentSelector: DocumentSelector = [
-			{ scheme: 'file', language: 'typescript', exclusive: true } as any,
-			{ scheme: 'file', language: 'javascript', exclusive: true } as any
+			{ scheme: 'lsif', }
 		];
 		let toRegister: BulkRegistration = BulkRegistration.create();
 		toRegister.add(DocumentSymbolRequest.type, {
@@ -140,10 +157,10 @@ async function checkRegistrations(): Promise<void> {
 		toRegister.add(FoldingRangeRequest.type, {
 			documentSelector
 		});
-		toRegister.add(HoverRequest.type, {
+		toRegister.add(DefinitionRequest.type, {
 			documentSelector
 		});
-		toRegister.add(DefinitionRequest.type, {
+		toRegister.add(HoverRequest.type, {
 			documentSelector
 		});
 		toRegister.add(ReferencesRequest.type, {
@@ -153,54 +170,46 @@ async function checkRegistrations(): Promise<void> {
 	}
 }
 
-function getUri(textDocument: TextDocumentIdentifier): string {
-	return URI.parse(textDocument.uri).toString(true);
-}
-
-function getDatabase(textDocument: TextDocumentIdentifier): [string, LsifDatabase | undefined] {
-	let uri = getUri(textDocument);
-	return [uri, findDatabase(uri)];
-}
 
 connection.onDocumentSymbol((params) => {
-	let [uri, database] = getDatabase(params.textDocument);
-	if (!database) {
+	let database = findDatabase(params.textDocument.uri);
+	if (database === undefined) {
 		return null;
 	}
-	return database.documentSymbols(uri);
+	return database.documentSymbols(params.textDocument.uri);
 });
 
 connection.onFoldingRanges((params) => {
-	let [uri, database] = getDatabase(params.textDocument);
-	if (!database) {
+	let database = findDatabase(params.textDocument.uri);
+	if (database === undefined) {
 		return null;
 	}
-	return database.foldingRanges(uri);
-});
-
-
-connection.onHover((params) => {
-	let [uri, database] = getDatabase(params.textDocument);
-	if (!database) {
-		return null;
-	}
-	return database.hover(uri, params.position);
+	return database.foldingRanges(params.textDocument.uri);
 });
 
 connection.onDefinition((params) => {
-	let [uri, database] = getDatabase(params.textDocument);
-	if (!database) {
+	let database = findDatabase(params.textDocument.uri);
+	if (database === undefined) {
 		return null;
 	}
-	return database.definitions(uri, params.position);
+	return database.definitions(params.textDocument.uri, params.position);
 });
 
-connection.onReferences((params) => {
-	let [uri, database] = getDatabase(params.textDocument);
-	if (!database) {
+connection.onHover((params) => {
+	let database = findDatabase(params.textDocument.uri);
+	if (database === undefined) {
 		return null;
 	}
-	return database.references(uri, params.position, params.context);
+	return database.hover(params.textDocument.uri, params.position);
+});
+
+
+connection.onReferences((params) => {
+	let database = findDatabase(params.textDocument.uri);
+	if (database === undefined) {
+		return null;
+	}
+	return database.references(params.textDocument.uri, params.position, params.context);
 });
 
 connection.listen();

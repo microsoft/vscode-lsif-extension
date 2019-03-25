@@ -6,7 +6,7 @@
 			"request": "launch",
 			"name": "Launch Client",
 			"runtimeExecutable": "${execPath}",
-			"args": ["--extensionDevelopmentPath=${workspaceRoot}"],
+			"args": ["--extensionDevelopmentPath=${workspaceRoot}", "--folder-uri=lsif:///c:/Users/dirkb/Projects/mseng/VSCode/vscode-lsif-extension/server/jsonrpc.db"],
 			"outFiles": ["${workspaceRoot}/client/out/**/*.js"],
 			"preLaunchTask": {
 				"type": "npm",
@@ -20,6 +20,15 @@
 			"port": 6019,
 			"restart": true,
 			"outFiles": ["${workspaceRoot}/server/out/**/*.js"]
+		},
+		{
+			"type": "node",
+			"request": "launch",
+			"name": "Testing DB",
+			"program": "${workspaceFolder}/server/out/test.js",
+			"cwd": "${workspaceFolder}/server",
+			"outFiles": ["${workspaceRoot}/server/out/**/*.js"],
+			"sourceMaps": true
 		}
 	],
 	"compounds": [

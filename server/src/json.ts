@@ -9,7 +9,9 @@ import URI from 'vscode-uri';
 
 import * as lsp from 'vscode-languageserver';
 
-import { Id, Vertex, Project, Document, Range, DiagnosticResult, DocumentSymbolResult, FoldingRangeResult, DocumentLinkResult, DefinitionResult, TypeDefinitionResult, HoverResult, ReferenceResult, ImplementationResult, Edge, RangeBasedDocumentSymbol, DeclarationResult, ResultSet } from './protocol';
+import { Id, Vertex, Project, Document, Range, DiagnosticResult, DocumentSymbolResult, FoldingRangeResult, DocumentLinkResult, DefinitionResult, TypeDefinitionResult, HoverResult, ReferenceResult, ImplementationResult, Edge, RangeBasedDocumentSymbol, DeclarationResult, ResultSet, ElementTypes, VertexLabels, EdgeLabels, ItemEdgeProperties } from './protocol';
+import { FileType, DocumentInfo } from './files';
+import { Database } from './database';
 
 interface Vertices {
 	all: Map<Id, Vertex>;
@@ -18,7 +20,11 @@ interface Vertices {
 	ranges: Map<Id, Range>;
 }
 
-type ItemTarget = { type: 'declaration'; range: Range } | { type: 'definition'; range: Range } | { type: 'reference'; range: Range } | { type: 'referenceResult'; result: ReferenceResult };
+type ItemTarget =
+	{ type: ItemEdgeProperties.declaration; range: Range; } |
+	{ type: ItemEdgeProperties.definition; range: Range; } |
+	{ type: ItemEdgeProperties.reference; range: Range; } |
+	{ type: ItemEdgeProperties.referenceResults; result: ReferenceResult; };
 
 interface Out {
 	contains: Map<Id, Document[] | Range[]>;
@@ -51,7 +57,7 @@ interface ResolvedReferenceResult {
 	referenceResults: ReferenceResult[];
 }
 
-export class LsifDatabase {
+export class JsonDatabase extends Database {
 
 	private version: string | undefined;
 	private vertices: Vertices;
@@ -60,6 +66,7 @@ export class LsifDatabase {
 	private in: In;
 
 	constructor(private file: string) {
+		super();
 		this.vertices = {
 			all: new Map(),
 			projects: new Map(),
@@ -96,10 +103,10 @@ export class LsifDatabase {
 		let json: (Vertex | Edge)[] = JSON.parse(fs.readFileSync(this.file, 'utf8'));
 		for (let item of json) {
 			switch (item.type) {
-				case 'vertex':
+				case ElementTypes.vertex:
 					this.processVertex(item);
 					break;
-				case 'edge':
+				case ElementTypes.edge:
 					this.processEdge(item);
 					break;
 			}
@@ -112,17 +119,17 @@ export class LsifDatabase {
 	private processVertex(vertex: Vertex): void {
 		this.vertices.all.set(vertex.id, vertex);
 		switch(vertex.label) {
-			case 'metaData':
+			case VertexLabels.metaData:
 				this.version = vertex.version;
 				break;
-			case 'project':
+			case VertexLabels.project:
 				this.vertices.projects.set(vertex.id, vertex);
 				break;
-			case 'document':
+			case VertexLabels.document:
 				this.vertices.documents.set(vertex.id, vertex);
 				this.indices.documents.set(vertex.uri, vertex);
 				break;
-			case 'range':
+			case VertexLabels.range:
 				this.vertices.ranges.set(vertex.id, vertex);
 				break;
 		}
@@ -139,7 +146,7 @@ export class LsifDatabase {
 		}
 		let values: any[] | undefined;
 		switch (edge.label) {
-			case 'contains':
+			case EdgeLabels.contains:
 				values = this.out.contains.get(from.id);
 				if (values === void 0) {
 					values = [ to as any ];
@@ -149,20 +156,20 @@ export class LsifDatabase {
 				}
 				this.in.contains.set(to.id, from as any);
 				break;
-			case 'item':
+			case EdgeLabels.item:
 				values = this.out.item.get(from.id);
 				let itemTarget: ItemTarget | undefined;
 				switch (edge.property) {
-					case 'reference':
+					case ItemEdgeProperties.reference:
 						itemTarget = { type: edge.property, range: to as Range };
 						break;
-					case 'declaration':
+					case ItemEdgeProperties.declaration:
 						itemTarget = { type: edge.property, range: to as Range };
 						break;
-					case 'definition':
+					case ItemEdgeProperties.definition:
 						itemTarget = { type: edge.property, range: to as Range };
 						break;
-					case 'referenceResult':
+					case ItemEdgeProperties.referenceResults:
 						itemTarget = { type: edge.property, result: to as ReferenceResult };
 						break;
 				}
@@ -175,34 +182,46 @@ export class LsifDatabase {
 					}
 				}
 				break;
-			case 'refersTo':
+			case EdgeLabels.refersTo:
 				this.out.refersTo.set(from.id, to as ResultSet);
 				break;
-			case 'textDocument/documentSymbol':
+			case EdgeLabels.textDocument_documentSymbol:
 				this.out.documentSymbol.set(from.id, to as DocumentSymbolResult);
 				break;
-			case 'textDocument/foldingRange':
+			case EdgeLabels.textDocument_foldingRange:
 				this.out.foldingRange.set(from.id, to as FoldingRangeResult);
 				break;
-			case 'textDocument/documentLink':
+			case EdgeLabels.textDocument_documentLink:
 				this.out.documentLink.set(from.id, to as DocumentLinkResult);
 				break;
-			case 'textDocument/diagnostic':
+			case EdgeLabels.textDocument_diagnostic:
 				this.out.diagnostic.set(from.id, to as DiagnosticResult);
 				break;
-			case 'textDocument/definition':
+			case EdgeLabels.textDocument_definition:
 				this.out.definition.set(from.id, to as DefinitionResult);
 				break;
-			case 'textDocument/typeDefinition':
+			case EdgeLabels.textDocument_typeDefinition:
 				this.out.typeDefinition.set(from.id, to as TypeDefinitionResult);
 				break;
-			case 'textDocument/hover':
+			case EdgeLabels.textDocument_hover:
 				this.out.hover.set(from.id, to as HoverResult);
 				break;
-			case 'textDocument/references':
+			case EdgeLabels.textDocument_references:
 				this.out.references.set(from.id, to as ReferenceResult);
 				break;
 		}
+	}
+
+	public readDirectory(uri: string): [string, FileType][] {
+		return [];
+	}
+
+	public readFileContent(uri: string): string {
+		return '';
+	}
+
+	public getDocumentInfos(): DocumentInfo[] {
+		return [];
 	}
 
 	public foldingRanges(uri: string): lsp.FoldingRange[] | undefined {
@@ -419,15 +438,15 @@ export class LsifDatabase {
 			if (targets) {
 				for (let target of targets) {
 					switch (target.type) {
-						case 'reference':
+						case ItemEdgeProperties.reference:
 							references.push(target.range);
 							break;
-						case 'declaration':
+						case ItemEdgeProperties.declaration:
 							declarations.push(target.range);
-						case 'definition':
+						case ItemEdgeProperties.definition:
 							definitions.push(target.range);
 							break;
-						case 'referenceResult':
+						case ItemEdgeProperties.referenceResults:
 							referenceResults.push(target.result);
 							break;
 					}
@@ -467,15 +486,15 @@ export class LsifDatabase {
 
 		let candidate: Range | undefined;
 		for (let item of contains) {
-			if (item.label === 'document') {
+			if (item.label !== VertexLabels.range) {
 				continue;
 			}
 			let range = item;
-			if (LsifDatabase.containsPosition(range, position)) {
+			if (JsonDatabase.containsPosition(range, position)) {
 				if (!candidate) {
 					candidate = item;
 				} else {
-					if (LsifDatabase.containsRange(candidate, range)) {
+					if (JsonDatabase.containsRange(candidate, range)) {
 						candidate = item;
 					}
 				}
@@ -492,19 +511,6 @@ export class LsifDatabase {
 			let document = this.in.contains.get(range.id)!;
 			return lsp.Location.create((document as Document).uri, this.asRange(range));
 		}
-	}
-
-	private asRange(value: Range): lsp.Range {
-		return {
-			start: {
-				line: value.start.line,
-				character: value.start.character
-			},
-			end: {
-				line: value.end.line,
-				character: value.end.character
-			}
-		};
 	}
 
 	private static containsPosition(range: lsp.Range, position: lsp.Position): boolean {

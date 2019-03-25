@@ -7,7 +7,9 @@
 		"outDir": "out",
 		"rootDir": "src",
 		"lib": ["es6"],
-		"strict": true
+		"strict": true,
+		"noImplicitAny": true,
+		"noImplicitReturns": true
 	},
 	"include": ["src"],
 	"exclude": ["node_modules"]

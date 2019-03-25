@@ -20,8 +20,7 @@
 		"vscode": "^1.29.0"
 	},
 	"activationEvents": [
-		"onLanguage:javascript",
-		"onLanguage:typescript"
+		"onFileSystem:lsif"
 	],
 	"enableProposedApi": true,
 	"main": "./client/out/extension",
@@ -54,6 +53,6 @@
 	"devDependencies": {
 		"@types/mocha": "^5.2.0",
 		"@types/node": "^8.0.0",
-		"typescript": "^3.1.6"
+		"typescript": "^3.3.4000"
 	}
 }

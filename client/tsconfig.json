@@ -5,7 +5,10 @@
 		"outDir": "out",
 		"rootDir": "src",
 		"lib": ["es6"],
-		"sourceMap": true
+		"sourceMap": true,
+		"strict": true,
+		"noImplicitAny": true,
+		"noImplicitReturns": true
 	},
 	"include": ["src"],
 	"exclude": ["node_modules"]
