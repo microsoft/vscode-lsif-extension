@@ -106,9 +106,19 @@ export function activate(context: ExtensionContext) {
 	// Start the client. This will also launch the server
 	client.start();
 
-	client.onReady().then(() => {
-		workspace.registerFileSystemProvider('lsif', new LsifFS(client), { isCaseSensitive: false, isReadonly: true});
+	let clientPromise = new Promise<LanguageClient>((resolve, reject) => {
+		client.onReady().then(() => {
+			resolve(client);
+		}, (error) => {
+			reject(error);
+		})
 	});
+
+	let folders = workspace.workspaceFolders;
+
+	console.log(folders);
+
+	workspace.registerFileSystemProvider('lsif', new LsifFS(clientPromise), { isCaseSensitive: true, isReadonly: true});
 }
 
 export function deactivate(): Thenable<void> | undefined {
@@ -203,7 +213,7 @@ namespace LoadDatabase {
 
 class LsifFS implements FileSystemProvider {
 
-	private readonly client: LanguageClient;
+	private readonly client: Promise<LanguageClient>;
 
 	private dbReady: Promise<void> | undefined;
 	private _projectRoot: Uri | undefined;
@@ -215,7 +225,7 @@ class LsifFS implements FileSystemProvider {
 	private readonly emitter: EventEmitter<FileChangeEvent[]>;
 	public readonly onDidChangeFile: Event<FileChangeEvent[]>;
 
-	public constructor(client: LanguageClient) {
+	public constructor(client: Promise<LanguageClient>) {
 		this.client = client;
 		this.root = new Directory('');
 		this.rootUri = Uri.parse('file:///');
@@ -250,12 +260,20 @@ class LsifFS implements FileSystemProvider {
 				readyResolve = r;
 				readyReject = e;
 			});
-			this._lsifRoot = uri;
-			return this.client.sendRequest(LoadDatabase.type, { uri: Uri.file(uri.fsPath).toString() }).then((value) => {
+			this._lsifRoot = this.findRoot(uri);
+			if (this._lsifRoot === undefined) {
+				throw new Error(`No database root for ${uri.toString(true)}`);
+			}
+			let client = await this.client;
+			return client.sendRequest(LoadDatabase.type, { uri: Uri.file(this.lsifRoot.fsPath).toString() }).then((value) => {
 				this._projectRoot = Uri.parse(value.projectRoot)
 				uriConverter.initialize(this.lsifRoot, this.projectRoot);
 				readyResolve();
-				return this.root;
+				let result = this._lookup(uriConverter.lsif2Fs(uri));
+				if (result === undefined) {
+					throw FileSystemError.FileNotFound(uri);
+				}
+				return result;
 			}, (error) => {
 				readyReject(error);
 				throw error;
@@ -279,6 +297,7 @@ class LsifFS implements FileSystemProvider {
 		if (!directory.isPopulated) {
 			let converted = uriConverter.code2Protocol(uri);
 			let params: ReadDirectoryParams = { database: Uri.file(this.lsifRoot.fsPath).toString(), uri: converted };
+			let client = await this.client;
 			return client.sendRequest(ReadDirectoryRequest.type, params).then((values) => {
 				for (let elem of values) {
 					let child: Entry = elem[1] === VFileType.Directory ? new Directory(elem[0]) : new File(elem[0]);
@@ -304,7 +323,8 @@ class LsifFS implements FileSystemProvider {
 		}
 		let converted = uriConverter.code2Protocol(uri);
 		let params: ReadFileParams = { database: Uri.file(this.lsifRoot.fsPath).toString(), uri: converted };
-		return this.client.sendRequest(ReadFileRequest.type, params).then((value) => {
+		let client = await this.client;
+		return client.sendRequest(ReadFileRequest.type, params).then((value) => {
 			let result = new Uint8Array(Buffer.from(value, 'base64'));
 			if (file !== undefined) {
 				file.data = result;
@@ -362,5 +382,18 @@ class LsifFS implements FileSystemProvider {
 			return entry;
 		}
 		throw undefined;
+	}
+
+	private findRoot(uri: Uri): Uri | undefined {
+		let folders = workspace.workspaceFolders;
+		if (folders === undefined) {
+			return undefined;
+		}
+		for (let folder of folders) {
+			if (uri.path.startsWith(folder.uri.path)) {
+				return folder.uri;
+			}
+		}
+		return undefined;
 	}
 }
