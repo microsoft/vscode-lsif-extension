@@ -89,15 +89,6 @@ export function activate(context: ExtensionContext) {
 
 	// Options to control the language client
 	let clientOptions: LanguageClientOptions = {
-		// Register the server for plain text documents
-		documentSelector: [
-			{ scheme: 'file', language: 'typescript', exclusive: true  }  as DocumentFilter,
-			{ scheme: 'file', language: 'javascript', exclusive: true  }  as DocumentFilter,
-		],
-		synchronize: {
-			// Notify the server about file changes to '.clientrc files contained in the workspace
-			fileEvents: workspace.createFileSystemWatcher('sip.json')
-		},
 		uriConverters: {
 			code2Protocol: (value) => uriConverter.code2Protocol(value),
 			protocol2Code: (value) => uriConverter.protocol2Code(value)
@@ -214,7 +205,7 @@ class LsifFS implements FileSystemProvider {
 
 	private readonly client: LanguageClient;
 
-	private firstStat: boolean;
+	private dbReady: Promise<void> | undefined;
 	private _projectRoot: Uri | undefined;
 	private _lsifRoot: Uri | undefined;
 
@@ -228,7 +219,6 @@ class LsifFS implements FileSystemProvider {
 		this.client = client;
 		this.root = new Directory('');
 		this.rootUri = Uri.parse('file:///');
-		this.firstStat = true;
 		this.emitter = new EventEmitter<FileChangeEvent[]>();
 		this.onDidChangeFile = this.emitter.event;
 	}
@@ -252,16 +242,26 @@ class LsifFS implements FileSystemProvider {
 		return Disposable.create(():void => {});
 	}
 
-	stat(uri: Uri): FileStat | Thenable<FileStat> {
-		if (this.firstStat) {
-			this.firstStat = false;
+	async stat(uri: Uri): Promise<FileStat> {
+		if (this.dbReady === undefined) {
+			let readyResolve: () => void;
+			let readyReject: (reason?: any) => void;
+			this.dbReady = new Promise((r, e) => {
+				readyResolve = r;
+				readyReject = e;
+			});
 			this._lsifRoot = uri;
 			return this.client.sendRequest(LoadDatabase.type, { uri: Uri.file(uri.fsPath).toString() }).then((value) => {
 				this._projectRoot = Uri.parse(value.projectRoot)
 				uriConverter.initialize(this.lsifRoot, this.projectRoot);
+				readyResolve();
 				return this.root;
+			}, (error) => {
+				readyReject(error);
+				throw error;
 			});
 		} else {
+			await this.dbReady;
 			let result = this._lookup(uriConverter.lsif2Fs(uri));
 			if (result === undefined) {
 				throw FileSystemError.FileNotFound(uri);
@@ -270,7 +270,8 @@ class LsifFS implements FileSystemProvider {
 		}
 	}
 
-	readDirectory(uri: Uri): [string, VFileType][] | Thenable<[string, VFileType][]> {
+	async readDirectory(uri: Uri): Promise<[string, VFileType][]> {
+		await this.dbReady;
 		const directory = this._lookupAsDirectory(uriConverter.lsif2Fs(uri));
 		if (directory === undefined) {
 			throw FileSystemError.FileNotFound(uri);
@@ -295,7 +296,8 @@ class LsifFS implements FileSystemProvider {
 		}
 	}
 
-	readFile(uri: Uri): Uint8Array | Thenable<Uint8Array> {
+	async readFile(uri: Uri): Promise<Uint8Array> {
+		await this.dbReady;
 		const file = this._lookupAsFile(uriConverter.lsif2Fs(uri));
 		if (file !== undefined && file.data !== undefined) {
 			return file.data;
