@@ -20,11 +20,18 @@
 		"vscode": "^1.29.0"
 	},
 	"activationEvents": [
-		"onFileSystem:lsif"
+		"onFileSystem:lsif",
+		"onCommand:lsif.openDatabase"
 	],
 	"enableProposedApi": true,
 	"main": "./client/out/extension",
 	"contributes": {
+		"commands": [
+			{
+				"command": "lsif.openDatabase",
+				"title": "Open LSIF Database"
+			}
+		],
 		"configuration": {
 			"type": "object",
 			"title": "Index Format configuration",

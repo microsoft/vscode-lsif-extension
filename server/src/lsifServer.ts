@@ -2,13 +2,10 @@
  * Copyright (c) Microsoft Corporation. All rights reserved.
  * Licensed under the MIT License. See License.txt in the project root for license information.
  * ------------------------------------------------------------------------------------------ */
-'use strict';
 
 import { promisify } from 'util';
 import * as path from 'path';
 import * as fs from 'fs';
-
-const exists = promisify(fs.exists);
 
 import Uri from 'vscode-uri';
 import { createConnection, ProposedFeatures, InitializeParams, TextDocumentSyncKind, WorkspaceFolder, ServerCapabilities, TextDocument, TextDocumentPositionParams, TextDocumentIdentifier, BulkUnregistration, BulkRegistration, DocumentSymbolRequest, DocumentSelector, FoldingRangeRequest, HoverRequest, DefinitionRequest, ReferencesRequest, RequestType } from 'vscode-languageserver';
@@ -17,6 +14,8 @@ import { Database, UriTransformer } from './database';
 import { JsonDatabase } from './json';
 import { SqliteDatabase } from './sqlite';
 import { FileType, FileStat } from './files';
+
+const LSIF_SCHEME = 'lsif';
 
 interface StatFileParams {
 	uri: string;
@@ -95,7 +94,7 @@ async function createDatabase(folder: WorkspaceFolder): Promise<void> {
 	let uri: Uri = Uri.parse(folder.uri);
 	const fsPath = uri.fsPath;
 	const extName = path.extname(fsPath);
-	if (await exists(fsPath)) {
+	if (fs.existsSync(fsPath)) {
 		try {
 			let database: Database | undefined;
 			if (extName === '.db') {
@@ -106,9 +105,7 @@ async function createDatabase(folder: WorkspaceFolder): Promise<void> {
 				database = new JsonDatabase(fsPath);
 			}
 			if (database !== undefined) {
-				_sortedDatabaseKeys = undefined;
 				databases.set(getDatabaseKey(folder.uri), database);
-				checkRegistrations();
 			}
 		} catch (_error) {
 			// report FileNotFound when accessing.
@@ -171,8 +168,7 @@ connection.onInitialize((params: InitializeParams) => {
 			textDocumentSync: TextDocumentSyncKind.None,
 			workspace: {
 				workspaceFolders: {
-					supported: true,
-					changeNotifications: true
+					supported: true
 				}
 			}
 		}
@@ -180,9 +176,42 @@ connection.onInitialize((params: InitializeParams) => {
 });
 
 connection.onInitialized(() => {
-	for (let folder of workspaceFolders.values()) {
-		createDatabase(folder);
+	try {
+		for (let folder of workspaceFolders.values()) {
+			const uri: Uri = Uri.parse(folder.uri);
+			if (uri.scheme === LSIF_SCHEME) {
+				createDatabase(folder);
+			}
+		}
+	} finally {
+		_sortedDatabaseKeys = undefined;
+		checkRegistrations();
 	}
+	// handle updates.
+	connection.workspace.onDidChangeWorkspaceFolders((event) => {
+		for (let removed of event.removed) {
+			const uri: Uri = Uri.parse(removed.uri);
+			if (uri.scheme === LSIF_SCHEME) {
+				const dbKey = getDatabaseKey(removed.uri);
+				const database = databases.get(dbKey);
+				if (database) {
+					try {
+						database.close();
+					} finally {
+						databases.delete(dbKey);
+					}
+				}
+			}
+		}
+		for (let added of event.added) {
+			const uri: Uri = Uri.parse(added.uri);
+			if (uri.scheme === LSIF_SCHEME) {
+				createDatabase(added);
+			}
+		}
+		_sortedDatabaseKeys = undefined;
+		checkRegistrations();
+	});
 });
 
 connection.onShutdown(() => {
