@@ -17,12 +17,19 @@ export namespace FileType {
 
 export type FileType = 0 | 1 | 2 | 64;
 
+export interface FileStat {
+	type: FileType;
+	ctime: number;
+	mtime: number;
+	size: number;
+}
+
 export interface DocumentInfo {
 	id: Id;
 	uri: string;
 }
 
-interface File {
+interface File extends FileStat {
 	type: 1;
 	name: string;
 	id: Id;
@@ -30,11 +37,11 @@ interface File {
 
 namespace File {
 	export function create(name: string, id: Id): File {
-		return { type: FileType.File, name, id };
+		return { type: FileType.File, ctime: Date.now(), mtime: Date.now(), size: 0, name, id };
 	}
 }
 
-interface Directory {
+interface Directory extends FileStat {
 	type: 2;
 	name: string;
 	children: Map<string, Entry>;
@@ -42,7 +49,7 @@ interface Directory {
 
 namespace Directory {
 	export function create(name: string): Directory {
-		return { type: FileType.Directory, name, children: new Map() }
+		return { type: FileType.Directory, ctime: Date.now(), mtime: Date.now(), size: 0, name, children: new Map() }
 	}
 }
 
@@ -70,6 +77,15 @@ export class FileSystem {
 				entry.children.set(basename, File.create(basename, info.id));
 			}
 		}
+	}
+
+	public stat(uri: string): FileStat | null {
+		if (!uri.startsWith(this.projectRoot)) {
+			return null;
+		}
+		let p = uri.substring(this.projectRoot.length + 1);
+		let entry = this.lookup(p, false);
+		return entry ? entry : null;
 	}
 
 	public readDirectory(uri: string): [string, FileType][] {

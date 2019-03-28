@@ -10,7 +10,7 @@ import URI from 'vscode-uri';
 import * as lsp from 'vscode-languageserver';
 
 import { Id, Vertex, Project, Document, Range, DiagnosticResult, DocumentSymbolResult, FoldingRangeResult, DocumentLinkResult, DefinitionResult, TypeDefinitionResult, HoverResult, ReferenceResult, ImplementationResult, Edge, RangeBasedDocumentSymbol, DeclarationResult, ResultSet, ElementTypes, VertexLabels, EdgeLabels, ItemEdgeProperties } from './protocol';
-import { FileType, DocumentInfo } from './files';
+import { FileType, DocumentInfo, FileStat } from './files';
 import { Database } from './database';
 
 interface Vertices {
@@ -116,6 +116,10 @@ export class JsonDatabase extends Database {
 		}
 	}
 
+	public close(): void {
+
+	}
+
 	private processVertex(vertex: Vertex): void {
 		this.vertices.all.set(vertex.id, vertex);
 		switch(vertex.label) {
@@ -210,6 +214,10 @@ export class JsonDatabase extends Database {
 				this.out.references.set(from.id, to as ReferenceResult);
 				break;
 		}
+	}
+
+	public stat(uri: string): FileStat | null {
+		return null;
 	}
 
 	public readDirectory(uri: string): [string, FileType][] {

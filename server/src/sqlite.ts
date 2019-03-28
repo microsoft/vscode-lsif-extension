@@ -6,10 +6,10 @@ import * as Sqlite from 'better-sqlite3';
 
 import * as lsp from 'vscode-languageserver';
 
-import { Database } from './database';
+import { Database, noopTransformer, UriTransformer } from './database';
 import { Id, EdgeLabels, Edge, DefinitionResult, FoldingRangeResult, DocumentSymbolResult, RangeBasedDocumentSymbol, Range, HoverResult, ReferenceResult, RangeId, Vertex, ReferenceResultItem, ItemEdgeProperties } from './protocol';
 import { MetaData, CompressorPropertyDescription, CompressorDescription, CompressionKind } from './protocol.compress';
-import { FileType, FileSystem, DocumentInfo } from './files';
+import { FileType, FileSystem, DocumentInfo, FileStat } from './files';
 import { CompletionRequest } from 'vscode-languageserver';
 
 interface DecompressorPropertyDescription {
@@ -339,6 +339,7 @@ class LocationRetriever extends Retriever<LocationResult> {
 export class SqliteDatabase extends Database {
 
 	private db: Sqlite.Database;
+	private uriTransformer: UriTransformer;
 
 	private allDocumentsStmt: Sqlite.Statement;
 	private getDocumentContentStmt: Sqlite.Statement;
@@ -355,7 +356,7 @@ export class SqliteDatabase extends Database {
 
 	private fileSystem: FileSystem;
 
-	public constructor(filename: string) {
+	public constructor(filename: string, transformerFactory?: (projectRoot: string) => UriTransformer) {
 		super();
 		this.db = new Sqlite(filename, { readonly: true });
 		this.readMetaData();
@@ -401,9 +402,14 @@ export class SqliteDatabase extends Database {
 		].join(' '));
 
 		this.fileSystem = new FileSystem(this.getProjectRoot(), this.getDocumentInfos());
+		this.uriTransformer = transformerFactory ? transformerFactory(this.getProjectRoot()) : noopTransformer;
 	}
 
 	public load(): void {
+	}
+
+	public close(): void {
+		this.db.close();
 	}
 
 	private readMetaData(): void {
@@ -469,12 +475,16 @@ export class SqliteDatabase extends Database {
 		return result;
 	}
 
+	public stat(uri: string): FileStat | null {
+		return this.fileSystem.stat(this.uriTransformer.toDatabase(uri));
+	}
+
 	public readDirectory(uri: string): [string, FileType][] {
-		return this.fileSystem.readDirectory(uri);
+		return this.fileSystem.readDirectory(this.uriTransformer.toDatabase(uri));
 	}
 
 	public readFileContent(uri: string): string {
-		let id = this.fileSystem.getFileId(uri);
+		let id = this.fileSystem.getFileId(this.uriTransformer.toDatabase(uri));
 		if (id === undefined) {
 			return '';
 		}
@@ -486,7 +496,7 @@ export class SqliteDatabase extends Database {
 	}
 
 	public foldingRanges(uri: string): lsp.FoldingRange[] | undefined {
-		let foldingResult = this.getResultForDocument(uri, EdgeLabels.textDocument_foldingRange);
+		let foldingResult = this.getResultForDocument(this.uriTransformer.toDatabase(uri), EdgeLabels.textDocument_foldingRange);
 		if (foldingResult === undefined) {
 			return undefined;
 		}
@@ -494,7 +504,7 @@ export class SqliteDatabase extends Database {
 	}
 
 	public documentSymbols(uri: string): lsp.DocumentSymbol[] | undefined {
-		let symbolResult = this.getResultForDocument(uri, EdgeLabels.textDocument_documentSymbol);
+		let symbolResult = this.getResultForDocument(this.uriTransformer.toDatabase(uri), EdgeLabels.textDocument_documentSymbol);
 		if (symbolResult === undefined) {
 			return undefined;
 		}
@@ -542,7 +552,7 @@ export class SqliteDatabase extends Database {
 	}
 
 	public definitions(uri: string, position: lsp.Position): lsp.Location | lsp.Location[] | undefined {
-		let range = this.findRange(uri, position);
+		let range = this.findRange(this.uriTransformer.toDatabase(uri), position);
 		if (range === undefined) {
 			return undefined;
 		}
@@ -558,7 +568,7 @@ export class SqliteDatabase extends Database {
 	}
 
 	public hover(uri: string, position: lsp.Position): lsp.Hover | undefined {
-		let range = this.findRange(uri, position);
+		let range = this.findRange(this.uriTransformer.toDatabase(uri), position);
 		if (range === undefined) {
 			return undefined;
 		}
@@ -596,7 +606,7 @@ export class SqliteDatabase extends Database {
 	}
 
 	public references(uri: string, position: lsp.Position, context: lsp.ReferenceContext): lsp.Location[] | undefined {
-		let range = this.findRange(uri, position);
+		let range = this.findRange(this.uriTransformer.toDatabase(uri), position);
 		if (range === undefined) {
 			return undefined;
 		}
@@ -718,7 +728,7 @@ export class SqliteDatabase extends Database {
 
 	private asLocation(value: Id | lsp.Location): lsp.Location {
 		if (lsp.Location.is(value)) {
-			return value;
+			return { range: value.range, uri: this.uriTransformer.fromDatabase(value.uri)};
 		} else {
 			const locationRetriever = new LocationRetriever(this.db, 1);
 			locationRetriever.add(value);
@@ -728,7 +738,7 @@ export class SqliteDatabase extends Database {
 	}
 
 	private createLocation(data: LocationResult): lsp.Location {
-		return lsp.Location.create(data.uri, lsp.Range.create(data.startLine, data.startCharacter, data.endLine, data.endCharacter));
+		return lsp.Location.create(this.uriTransformer.fromDatabase(data.uri), lsp.Range.create(data.startLine, data.startCharacter, data.endLine, data.endCharacter));
 	}
 
 	private getResultForDocument(uri: string, label: EdgeLabels.textDocument_documentSymbol): DocumentSymbolResult | undefined;

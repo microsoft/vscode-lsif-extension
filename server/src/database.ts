@@ -6,7 +6,17 @@
 import * as lsp from 'vscode-languageserver';
 
 import { Range, Id } from './protocol';
-import { FileType } from './files';
+import { FileType, FileStat } from './files';
+
+export interface UriTransformer {
+	toDatabase(uri: string): string;
+	fromDatabase(uri: string): string;
+}
+
+export const noopTransformer: UriTransformer = {
+	toDatabase: uri => uri,
+	fromDatabase: uri => uri
+}
 
 export abstract class Database {
 
@@ -19,6 +29,8 @@ export abstract class Database {
 
 	public abstract load(): void;
 
+	public abstract close(): void;
+
 	public abstract foldingRanges(uri: string): lsp.FoldingRange[] | undefined;
 
 	public abstract documentSymbols(uri: string): lsp.DocumentSymbol[] | undefined;
@@ -28,6 +40,8 @@ export abstract class Database {
 	public abstract hover(uri: string, position: lsp.Position): lsp.Hover | undefined;
 
 	public abstract references(uri: string, position: lsp.Position, context: lsp.ReferenceContext): lsp.Location[] | undefined;
+
+	public abstract stat(uri: string): FileStat | null;
 
 	public abstract readDirectory(uri: string): [string, FileType][];
 
