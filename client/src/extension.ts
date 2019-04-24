@@ -19,6 +19,28 @@ let client: LanguageClient;
 
 export function activate(context: ExtensionContext) {
 
+	commands.registerCommand('lsif.openDatabase', () => {
+		window.showOpenDialog(
+			{
+				openLabel: 'Select LSIF Database to open',
+				canSelectFiles: true,
+				canSelectFolders: false,
+				canSelectMany: true,
+				filters: { 'LSIF': [/*'db', */'lsif'] }
+			}
+		).then((values: Uri[] | undefined) => {
+			if (values === undefined || values.length === 0) {
+				return;
+			}
+			let toAdd = values.map((uri) => { return { uri: uri.with({ scheme: 'lsif'}) }; });
+			workspace.updateWorkspaceFolders(
+				workspace.workspaceFolders ? workspace.workspaceFolders.length : 0,
+				0,
+				...toAdd
+			);
+		})
+	});
+
 	// The server is implemented in node
 	let serverModule = context.asAbsolutePath(
 		path.join('server', 'out', 'lsifServer.js')
@@ -62,27 +84,6 @@ export function activate(context: ExtensionContext) {
 		})
 	});
 
-	commands.registerCommand('lsif.openDatabase', () => {
-		window.showOpenDialog(
-			{
-				openLabel: 'Select LSIF Database to open',
-				canSelectFiles: true,
-				canSelectFolders: false,
-				canSelectMany: true,
-				filters: { 'LSIF': ['db', 'json'] }
-			}
-		).then((values: Uri[] | undefined) => {
-			if (values === undefined || values.length === 0) {
-				return;
-			}
-			let toAdd = values.map((uri) => { return { uri: uri.with({ scheme: 'lsif'}) }; });
-			workspace.updateWorkspaceFolders(
-				workspace.workspaceFolders ? workspace.workspaceFolders.length : 0,
-				0,
-				...toAdd
-			);
-		})
-	});
 	workspace.registerFileSystemProvider('lsif', new LsifFS(clientPromise), { isCaseSensitive: true, isReadonly: true});
 }
 

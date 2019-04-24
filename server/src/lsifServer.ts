@@ -12,7 +12,7 @@ import { createConnection, ProposedFeatures, InitializeParams, TextDocumentSyncK
 
 import { Database, UriTransformer } from './database';
 import { JsonDatabase } from './json';
-import { SqliteDatabase } from './sqlite';
+// import { SqliteDatabase } from './sqlite';
 import { FileType, FileStat } from './files';
 
 const LSIF_SCHEME = 'lsif';
@@ -97,9 +97,9 @@ async function createDatabase(folder: WorkspaceFolder): Promise<Database | undef
 	if (fs.existsSync(fsPath)) {
 		try {
 			let database: Database | undefined;
-			if (extName === '.db') {
+			/*if (extName === '.db') {
 				database = new SqliteDatabase();
-			} else if (extName === '.lsif') {
+			} else */if (extName === '.lsif') {
 				database = new JsonDatabase();
 			}
 			if (database !== undefined) {
