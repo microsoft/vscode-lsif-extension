@@ -1,7 +1,8 @@
 {
-	"name": "lsif",
+	"name": "vscode-lsif",
 	"description": "Language Server Index Format extension",
 	"author": "Microsoft Corporation",
+	"publisher": "ms-vscode",
 	"license": "MIT",
 	"version": "0.1.0",
 	"repository": {
@@ -11,7 +12,6 @@
 	"bugs": {
 		"url": "https://github.com/Microsoft/vscode-lsif-extension/issues"
 	},
-	"publisher": "ms-vscode",
 	"categories": [],
 	"keywords": [
 		"multi-root ready"
@@ -23,7 +23,6 @@
 		"onFileSystem:lsif",
 		"onCommand:lsif.openDatabase"
 	],
-	"enableProposedApi": true,
 	"main": "./client/out/extension",
 	"contributes": {
 		"commands": [
