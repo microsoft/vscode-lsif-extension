@@ -1,3 +1,3 @@
 # Extension to run a language server from a Language Server Index Format file
 
-This extension checks if a lsif.json file exists in the root of a workspace folder and if so server a language server from the content of the lsif.json file.
+The extension allows to browse the content of a LSIF dump store either in a SQLite DB or in a file using LSIF line json format. To open a dump use the command Open LSIF Database.

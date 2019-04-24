@@ -1,10 +1,10 @@
 {
-	"name": "vscode-lsif",
+	"name": "vscode-lsif-win32-x64",
 	"description": "Language Server Index Format extension",
 	"author": "Microsoft Corporation",
 	"publisher": "ms-vscode",
 	"license": "MIT",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/Microsoft/vscode-lsif-extension.git"
@@ -58,6 +58,7 @@
 	"devDependencies": {
 		"@types/mocha": "^5.2.0",
 		"@types/node": "^8.0.0",
+		"electron-rebuild": "^1.8.4",
 		"typescript": "^3.3.4000"
 	}
 }

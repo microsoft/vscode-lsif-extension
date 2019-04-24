@@ -26,7 +26,7 @@ export function activate(context: ExtensionContext) {
 				canSelectFiles: true,
 				canSelectFolders: false,
 				canSelectMany: true,
-				filters: { 'LSIF': [/*'db', */'lsif'] }
+				filters: { 'LSIF': ['db', 'lsif'] }
 			}
 		).then((values: Uri[] | undefined) => {
 			if (values === undefined || values.length === 0) {
@@ -56,8 +56,7 @@ export function activate(context: ExtensionContext) {
 		debug: {
 			module: serverModule,
 			transport: TransportKind.ipc,
-			options: debugOptions,
-			runtime: 'node'
+			options: debugOptions
 		}
 	};
 

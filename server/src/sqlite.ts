@@ -64,7 +64,7 @@ class Decompressor {
 	}
 
 	public getPropertyDescription(name: string): DecompressorPropertyDescription | undefined {
-		for (let item of this.properties.values()) {
+		for (let item of this.properties) {
 			if (item.name === name) {
 				return item;
 			}
