@@ -405,6 +405,7 @@ export class SqliteDatabase extends Database {
 			'Inner Join documents d On r.belongsTo = d.id',
 			'Where i.outV = $id and (i.property in (1, 2, 3))'
 		].join(' '));
+		this.initialize(transformerFactory);
 		return Promise.resolve();
 	}
 

@@ -17,7 +17,7 @@
 		"multi-root ready"
 	],
 	"engines": {
-		"vscode": "^1.29.0"
+		"vscode": "^1.33.0"
 	},
 	"activationEvents": [
 		"onFileSystem:lsif",
@@ -54,8 +54,7 @@
 		"vscode:prepublish": "cd client && npm run update-vscode && cd .. && npm run compile",
 		"compile": "tsc -b",
 		"watch": "tsc -b -w",
-		"postinstall": "cd client && npm install && cd ../server && npm install && cd ..",
-		"test": "sh ./scripts/e2e.sh"
+		"postinstall": "cd client && yarn install && cd ../server && yarn install && cd .."
 	},
 	"devDependencies": {
 		"@types/mocha": "^5.2.0",
