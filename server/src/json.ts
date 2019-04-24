@@ -2,16 +2,22 @@
  * Copyright (c) Microsoft Corporation. All rights reserved.
  * Licensed under the MIT License. See License.txt in the project root for license information.
  * ------------------------------------------------------------------------------------------ */
-
 import * as fs from 'fs';
+import * as readline from 'readline';
 
 import URI from 'vscode-uri';
+import * as SemVer from 'semver';
 
 import * as lsp from 'vscode-languageserver';
+import {
+	Id, Vertex, Project, Document, Range, DiagnosticResult, DocumentSymbolResult, FoldingRangeResult, DocumentLinkResult, DefinitionResult,
+	TypeDefinitionResult, HoverResult, ReferenceResult, ImplementationResult, Edge, RangeBasedDocumentSymbol, DeclarationResult, ResultSet,
+	ElementTypes, VertexLabels, EdgeLabels, ItemEdgeProperties
+} from 'lsif-protocol';
 
-import { Id, Vertex, Project, Document, Range, DiagnosticResult, DocumentSymbolResult, FoldingRangeResult, DocumentLinkResult, DefinitionResult, TypeDefinitionResult, HoverResult, ReferenceResult, ImplementationResult, Edge, RangeBasedDocumentSymbol, DeclarationResult, ResultSet, ElementTypes, VertexLabels, EdgeLabels, ItemEdgeProperties } from './protocol';
 import { FileType, DocumentInfo, FileStat } from './files';
-import { Database } from './database';
+import { Database, UriTransformer } from './database';
+import { resolve } from 'vscode-languageserver/lib/files';
 
 interface Vertices {
 	all: Map<Id, Vertex>;
@@ -21,9 +27,9 @@ interface Vertices {
 }
 
 type ItemTarget =
-	{ type: ItemEdgeProperties.declaration; range: Range; } |
-	{ type: ItemEdgeProperties.definition; range: Range; } |
-	{ type: ItemEdgeProperties.reference; range: Range; } |
+	{ type: ItemEdgeProperties.declarations; range: Range; } |
+	{ type: ItemEdgeProperties.definitions; range: Range; } |
+	{ type: ItemEdgeProperties.references; range: Range; } |
 	{ type: ItemEdgeProperties.referenceResults; result: ReferenceResult; };
 
 interface Out {
@@ -60,12 +66,14 @@ interface ResolvedReferenceResult {
 export class JsonDatabase extends Database {
 
 	private version: string | undefined;
+	private projectRoot!: URI;
+
 	private vertices: Vertices;
 	private indices: Indices;
 	private out: Out;
 	private in: In;
 
-	constructor(private file: string) {
+	constructor() {
 		super();
 		this.vertices = {
 			all: new Map(),
@@ -99,25 +107,53 @@ export class JsonDatabase extends Database {
 		}
 	}
 
-	public load(): void {
-		let json: (Vertex | Edge)[] = JSON.parse(fs.readFileSync(this.file, 'utf8'));
-		for (let item of json) {
-			switch (item.type) {
-				case ElementTypes.vertex:
-					this.processVertex(item);
-					break;
-				case ElementTypes.edge:
-					this.processEdge(item);
-					break;
-			}
-		}
-		if (this.version && this.version !== '0.1.0') {
-			throw new Error(`Unsupported version  ${this.version}`);
-		}
+	public load(file: string, transformerFactory: (projectRoot: string) => UriTransformer): Promise<void> {
+		return new Promise<void>((resolve, reject) => {
+			let input: fs.ReadStream = fs.createReadStream(file, { encoding: 'utf8'});
+			const rd = readline.createInterface(input);
+			rd.on('line', (line) => {
+				let element: Edge | Vertex = JSON.parse(line);
+				switch (element.type) {
+					case ElementTypes.vertex:
+						this.processVertex(element);
+						break;
+					case ElementTypes.edge:
+						this.processEdge(element);
+						break;
+				}
+			});
+			rd.on('close', () => {
+				if (this.projectRoot === undefined) {
+					reject(new Error('No project root provided.'));
+					return;
+				}
+				if (this.version === undefined) {
+					reject(new Error('No version found.'));
+					return;
+				} else {
+					let semVer = SemVer.parse(this.version);
+					if (!semVer) {
+						reject(new Error(`No valid semantic version string. The version is: ${this.version}`));
+						return;
+					}
+					if (!SemVer.satisfies(semVer, "0.3.x")) {
+						reject(new Error(`Requires version 0.3.x but received: ${this.version}`));
+						return;
+					}
+				}
+				resolve();
+			});
+
+		}).then(() => {
+			this.initialize(transformerFactory);
+		});
+	}
+
+	public getProjectRoot(): URI {
+		return this.projectRoot;
 	}
 
 	public close(): void {
-
 	}
 
 	private processVertex(vertex: Vertex): void {
@@ -125,6 +161,9 @@ export class JsonDatabase extends Database {
 		switch(vertex.label) {
 			case VertexLabels.metaData:
 				this.version = vertex.version;
+				if (vertex.projectRoot !== undefined) {
+					this.projectRoot = URI.parse(vertex.projectRoot);
+				}
 				break;
 			case VertexLabels.project:
 				this.vertices.projects.set(vertex.id, vertex);
@@ -164,13 +203,13 @@ export class JsonDatabase extends Database {
 				values = this.out.item.get(from.id);
 				let itemTarget: ItemTarget | undefined;
 				switch (edge.property) {
-					case ItemEdgeProperties.reference:
+					case ItemEdgeProperties.references:
 						itemTarget = { type: edge.property, range: to as Range };
 						break;
-					case ItemEdgeProperties.declaration:
+					case ItemEdgeProperties.declarations:
 						itemTarget = { type: edge.property, range: to as Range };
 						break;
-					case ItemEdgeProperties.definition:
+					case ItemEdgeProperties.definitions:
 						itemTarget = { type: edge.property, range: to as Range };
 						break;
 					case ItemEdgeProperties.referenceResults:
@@ -216,24 +255,24 @@ export class JsonDatabase extends Database {
 		}
 	}
 
-	public stat(uri: string): FileStat | null {
-		return null;
-	}
-
-	public readDirectory(uri: string): [string, FileType][] {
-		return [];
-	}
-
-	public readFileContent(uri: string): string {
-		return '';
-	}
-
 	public getDocumentInfos(): DocumentInfo[] {
-		return [];
+		let result: DocumentInfo[] = [];
+		this.vertices.documents.forEach((document, key) => {
+			result.push({ uri: document.uri, id: key });
+		});
+		return result;
+	}
+
+	protected fileContent(id: Id): string | undefined {
+		let document = this.vertices.documents.get(id);
+		if (document === undefined) {
+			return undefined;
+		}
+		return document.contents;
 	}
 
 	public foldingRanges(uri: string): lsp.FoldingRange[] | undefined {
-		let document = this.indices.documents.get(uri);
+		let document = this.indices.documents.get(this.toDatabase(uri));
 		if (document === void 0) {
 			return undefined;
 		}
@@ -249,7 +288,7 @@ export class JsonDatabase extends Database {
 	}
 
 	public documentSymbols(uri: string): lsp.DocumentSymbol[] | undefined {
-		let document = this.indices.documents.get(uri);
+		let document = this.indices.documents.get(this.toDatabase(uri));
 		if (document === void 0) {
 			return undefined;
 		}
@@ -297,7 +336,7 @@ export class JsonDatabase extends Database {
 	}
 
 	public definitions(uri: string, position: lsp.Position): lsp.Location | lsp.Location[] | undefined {
-		let range = this.findRangeFromPosition(uri, position);
+		let range = this.findRangeFromPosition(this.toDatabase(uri), position);
 		if (range === void 0) {
 			return undefined;
 		}
@@ -312,12 +351,12 @@ export class JsonDatabase extends Database {
 			}
 			return result;
 		} else {
-			return this.asLocation(definitionResult.result);
+			return undefined;
 		}
 	}
 
 	public hover(uri: string, position: lsp.Position): lsp.Hover | undefined {
-		let range = this.findRangeFromPosition(uri, position);
+		let range = this.findRangeFromPosition(this.toDatabase(uri), position);
 		if (range === void 0) {
 			return undefined;
 		}
@@ -335,7 +374,7 @@ export class JsonDatabase extends Database {
 	}
 
 	public references(uri: string, position: lsp.Position, context: lsp.ReferenceContext): lsp.Location[] | undefined {
-		let range = this.findRangeFromPosition(uri, position);
+		let range = this.findRangeFromPosition(this.toDatabase(uri), position);
 		if (range === void 0) {
 			return undefined;
 		}
@@ -446,12 +485,12 @@ export class JsonDatabase extends Database {
 			if (targets) {
 				for (let target of targets) {
 					switch (target.type) {
-						case ItemEdgeProperties.reference:
+						case ItemEdgeProperties.references:
 							references.push(target.range);
 							break;
-						case ItemEdgeProperties.declaration:
+						case ItemEdgeProperties.declarations:
 							declarations.push(target.range);
-						case ItemEdgeProperties.definition:
+						case ItemEdgeProperties.definitions:
 							definitions.push(target.range);
 							break;
 						case ItemEdgeProperties.referenceResults:
@@ -477,7 +516,7 @@ export class JsonDatabase extends Database {
 				return;
 			}
 			let document = this.in.contains.get(value.id)!;
-			result.push(lsp.Location.create((document as Document).uri, this.asRange(value)));
+			result.push(lsp.Location.create(this.fromDatabase((document as Document).uri), this.asRange(value)));
 			dedup.add(value.id);
 		}
 	}
@@ -517,7 +556,7 @@ export class JsonDatabase extends Database {
 		} else {
 			let range = this.vertices.ranges.get(value)!;
 			let document = this.in.contains.get(range.id)!;
-			return lsp.Location.create((document as Document).uri, this.asRange(range));
+			return lsp.Location.create(this.fromDatabase((document as Document).uri), this.asRange(range));
 		}
 	}
 

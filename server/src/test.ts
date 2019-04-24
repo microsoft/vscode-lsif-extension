@@ -4,8 +4,10 @@
  * ------------------------------------------------------------------------------------------ */
 
 import { SqliteDatabase } from './sqlite';
+import { noopTransformer } from './database';
 
-const db = new SqliteDatabase('jsonrpc.db');
+const db = new SqliteDatabase();
+db.load('jsonrpc.db', () => noopTransformer);
 
 // let definitions = db.definitions('file:///c:/Users/dirkb/Projects/mseng/LanguageServer/Node/jsonrpc/src/events.ts', { line: 6, character: 21});
 // console.log(JSON.stringify(definitions));

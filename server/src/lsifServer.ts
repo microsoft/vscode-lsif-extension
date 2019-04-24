@@ -30,7 +30,7 @@ interface ReadFileParams {
 }
 
 namespace ReadFileRequest {
-	export const type = new RequestType<ReadFileParams, string, void, void>('lsif/readfile');
+	export const type = new RequestType<ReadFileParams, string | null, void, void>('lsif/readfile');
 }
 
 interface ReadDirectoryParams {
@@ -85,12 +85,12 @@ function sortedDatabaseKeys(): string[] {
 	return _sortedDatabaseKeys;
 }
 
-const databases: Map<string, Database> = new Map();
+const databases: Map<string, Promise<Database>> = new Map();
 function getDatabaseKey(uri: string): string {
 	return uri.charAt(uri.length - 1) !== '/' ? `${uri}/` : uri;
 }
 
-async function createDatabase(folder: WorkspaceFolder): Promise<void> {
+async function createDatabase(folder: WorkspaceFolder): Promise<Database | undefined> {
 	let uri: Uri = Uri.parse(folder.uri);
 	const fsPath = uri.fsPath;
 	const extName = path.extname(fsPath);
@@ -98,22 +98,27 @@ async function createDatabase(folder: WorkspaceFolder): Promise<void> {
 		try {
 			let database: Database | undefined;
 			if (extName === '.db') {
-				database = new SqliteDatabase(fsPath, (projectRoot: string) => {
-					return new Transformer(uri, projectRoot);
-				});
-			} else if (extName === '.json') {
-				database = new JsonDatabase(fsPath);
+				database = new SqliteDatabase();
+			} else if (extName === '.lsif') {
+				database = new JsonDatabase();
 			}
 			if (database !== undefined) {
-				databases.set(getDatabaseKey(folder.uri), database);
+				let promise = database.load(fsPath, (projectRoot: string) => {
+					return new Transformer(uri, projectRoot);
+				}).then(() => {
+					return database!;
+				});
+				databases.set(getDatabaseKey(folder.uri), promise);
+				return promise;
 			}
 		} catch (_error) {
 			// report FileNotFound when accessing.
 		}
 	}
+	return Promise.resolve(undefined);
 }
 
-function findDatabase(uri: string): Database | undefined {
+function findDatabase(uri: string): Promise<Database> | undefined {
 	let sorted = sortedDatabaseKeys();
 	if (uri.charAt(uri.length - 1) !== '/') {
 		uri = uri + '/';
@@ -175,12 +180,12 @@ connection.onInitialize((params: InitializeParams) => {
 	};
 });
 
-connection.onInitialized(() => {
+connection.onInitialized(async () => {
 	try {
 		for (let folder of workspaceFolders.values()) {
 			const uri: Uri = Uri.parse(folder.uri);
 			if (uri.scheme === LSIF_SCHEME) {
-				createDatabase(folder);
+				await createDatabase(folder);
 			}
 		}
 	} finally {
@@ -188,25 +193,27 @@ connection.onInitialized(() => {
 		checkRegistrations();
 	}
 	// handle updates.
-	connection.workspace.onDidChangeWorkspaceFolders((event) => {
+	connection.workspace.onDidChangeWorkspaceFolders(async (event) => {
 		for (let removed of event.removed) {
 			const uri: Uri = Uri.parse(removed.uri);
 			if (uri.scheme === LSIF_SCHEME) {
 				const dbKey = getDatabaseKey(removed.uri);
-				const database = databases.get(dbKey);
-				if (database) {
-					try {
-						database.close();
-					} finally {
-						databases.delete(dbKey);
-					}
+				const promise = databases.get(dbKey);
+				if (promise) {
+					promise.then((database) => {
+						try {
+							database.close();
+						} finally {
+							databases.delete(dbKey);
+						}
+					});
 				}
 			}
 		}
 		for (let added of event.added) {
 			const uri: Uri = Uri.parse(added.uri);
 			if (uri.scheme === LSIF_SCHEME) {
-				createDatabase(added);
+				await createDatabase(added);
 			}
 		}
 		_sortedDatabaseKeys = undefined;
@@ -216,8 +223,8 @@ connection.onInitialized(() => {
 
 connection.onShutdown(() => {
 	try {
-		for (let database of databases.values()) {
-			database.close();
+		for (let promise of databases.values()) {
+			promise.then((database) => database.close());
 		}
 	} finally {
 		_sortedDatabaseKeys = undefined;
@@ -225,68 +232,76 @@ connection.onShutdown(() => {
 	}
 });
 
-connection.onRequest(StatFileRequest.type, (params) => {
-	let database = findDatabase(params.uri);
-	if (database === undefined) {
+connection.onRequest(StatFileRequest.type, async (params) => {
+	let promise = findDatabase(params.uri);
+	if (promise === undefined) {
 		return null;
 	}
+	let database = await promise;
 	return database.stat(params.uri);
 });
 
-connection.onRequest(ReadDirectoryRequest.type, (params) => {
-	let database = findDatabase(params.uri);
-	if (database === undefined) {
+connection.onRequest(ReadDirectoryRequest.type, async (params) => {
+	let promise = findDatabase(params.uri);
+	if (promise === undefined) {
 		return [];
 	}
+	let database = await promise;
 	return database.readDirectory(params.uri);
 });
 
-connection.onRequest(ReadFileRequest.type, (params) => {
-	let database = findDatabase(params.uri);
-	if (database === undefined) {
-		return '';
+connection.onRequest(ReadFileRequest.type, async (params) => {
+	let promise = findDatabase(params.uri);
+	if (promise === undefined) {
+		return null;
 	}
+	let database = await promise;
 	return database.readFileContent(params.uri);
 });
 
-connection.onDocumentSymbol((params) => {
-	let database = findDatabase(params.textDocument.uri);
-	if (database === undefined) {
+connection.onDocumentSymbol(async (params) => {
+	let promise = findDatabase(params.textDocument.uri);
+	if (promise === undefined) {
 		return null;
 	}
+	let database = await promise;
 	return database.documentSymbols(params.textDocument.uri);
 });
 
-connection.onFoldingRanges((params) => {
-	let database = findDatabase(params.textDocument.uri);
-	if (database === undefined) {
+connection.onFoldingRanges(async (params) => {
+	let promise = findDatabase(params.textDocument.uri);
+	if (promise === undefined) {
 		return null;
 	}
+	let database = await promise;
 	return database.foldingRanges(params.textDocument.uri);
 });
 
-connection.onDefinition((params) => {
-	let database = findDatabase(params.textDocument.uri);
-	if (database === undefined) {
+connection.onDefinition(async (params) => {
+	let promise = findDatabase(params.textDocument.uri);
+	if (promise === undefined) {
 		return null;
 	}
+	let database = await promise;
 	return database.definitions(params.textDocument.uri, params.position);
 });
 
-connection.onHover((params) => {
-	let database = findDatabase(params.textDocument.uri);
-	if (database === undefined) {
+connection.onHover(async (params) => {
+	let promise = findDatabase(params.textDocument.uri);
+	if (promise === undefined) {
 		return null;
 	}
+	let database = await promise;
 	return database.hover(params.textDocument.uri, params.position);
 });
 
 
-connection.onReferences((params) => {
-	let database = findDatabase(params.textDocument.uri);
-	if (database === undefined) {
+connection.onReferences(async (params) => {
+	let promise = findDatabase(params.textDocument.uri);
+	if (promise === undefined) {
 		return null;
 	}
+	let database = await promise;
 	return database.references(params.textDocument.uri, params.position, params.context);
 });
 

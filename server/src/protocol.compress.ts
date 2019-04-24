@@ -4,7 +4,7 @@
  * ------------------------------------------------------------------------------------------ */
 'use strict';
 
-import * as protocol from './protocol';
+import * as protocol from 'lsif-protocol';
 
 export enum CompressionKind {
 	scalar = 'scalar',

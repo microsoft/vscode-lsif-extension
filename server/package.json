@@ -8,12 +8,15 @@
 		"node": "*"
 	},
 	"dependencies": {
-		"vscode-uri": "^1.0.6",
+		"better-sqlite3": "^5.3.0",
+		"lsif-protocol": "^0.3.1",
+		"semver": "^6.0.0",
 		"vscode-languageserver": "^5.1.0",
-		"better-sqlite3": "^5.3.0"
+		"vscode-uri": "^1.0.6"
 	},
 	"devDependencies": {
-		"@types/better-sqlite3": "^5.2.1"
+		"@types/better-sqlite3": "^5.2.1",
+		"@types/semver": "^6.0.0"
 	},
 	"scripts": {}
 }

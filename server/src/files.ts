@@ -4,9 +4,7 @@
  * ------------------------------------------------------------------------------------------ */
 import * as path from 'path';
 
-import { Id } from './protocol';
-import { ENETUNREACH } from 'constants';
-import { create } from 'domain';
+import { Id } from 'lsif-protocol';
 
 export namespace FileType {
 	export const Unknown: 0 = 0;

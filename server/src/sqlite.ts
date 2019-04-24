@@ -6,11 +6,14 @@ import * as Sqlite from 'better-sqlite3';
 
 import * as lsp from 'vscode-languageserver';
 
-import { Database, noopTransformer, UriTransformer } from './database';
-import { Id, EdgeLabels, Edge, DefinitionResult, FoldingRangeResult, DocumentSymbolResult, RangeBasedDocumentSymbol, Range, HoverResult, ReferenceResult, RangeId, Vertex, ReferenceResultItem, ItemEdgeProperties } from './protocol';
-import { MetaData, CompressorPropertyDescription, CompressorDescription, CompressionKind } from './protocol.compress';
-import { FileType, FileSystem, DocumentInfo, FileStat } from './files';
-import { CompletionRequest } from 'vscode-languageserver';
+import { Database, UriTransformer } from './database';
+import {
+	Id, EdgeLabels, DefinitionResult, FoldingRangeResult, DocumentSymbolResult, RangeBasedDocumentSymbol, Range, HoverResult, ReferenceResult,
+	ReferenceResultItem, ItemEdgeProperties
+} from 'lsif-protocol';
+import { MetaData, CompressorDescription, CompressionKind } from './protocol.compress';
+import { DocumentInfo } from './files';
+import URI from 'vscode-uri';
 
 interface DecompressorPropertyDescription {
 	name: string;
@@ -338,27 +341,29 @@ class LocationRetriever extends Retriever<LocationResult> {
 
 export class SqliteDatabase extends Database {
 
-	private db: Sqlite.Database;
-	private uriTransformer: UriTransformer;
+	private db!: Sqlite.Database;
 
-	private allDocumentsStmt: Sqlite.Statement;
-	private getDocumentContentStmt: Sqlite.Statement;
-	private findRangeStmt: Sqlite.Statement;
-	private findDocumentStmt: Sqlite.Statement;
-	private findResultStmt: Sqlite.Statement;
-	private findResultViaSetStmt: Sqlite.Statement;
-	private findResultForDocumentStmt: Sqlite.Statement;
-	private findRangeFromReferenceResult: Sqlite.Statement;
+	private allDocumentsStmt!: Sqlite.Statement;
+	private getDocumentContentStmt!: Sqlite.Statement;
+	private findRangeStmt!: Sqlite.Statement;
+	private findDocumentStmt!: Sqlite.Statement;
+	private findResultStmt!: Sqlite.Statement;
+	private findResultViaSetStmt!: Sqlite.Statement;
+	private findResultForDocumentStmt!: Sqlite.Statement;
+	private findRangeFromReferenceResult!: Sqlite.Statement;
 
+	private projectRoot!: URI;
+	private readyPromise!: Promise<void>;
 	private vertexLabels: Map<string, number> | undefined;
 	private edgeLabels: Map<string, number> | undefined;
 	private itemEdgeProperties: Map<string, number> | undefined;
 
-	private fileSystem: FileSystem;
-
-	public constructor(filename: string, transformerFactory?: (projectRoot: string) => UriTransformer) {
+	public constructor() {
 		super();
-		this.db = new Sqlite(filename, { readonly: true });
+	}
+
+	public load(file: string, transformerFactory: (projectRoot: string) => UriTransformer): Promise<void> {
+		this.db = new Sqlite(file, { readonly: true });
 		this.readMetaData();
 		this.allDocumentsStmt = this.db.prepare('Select id, uri From documents');
 		this.getDocumentContentStmt = this.db.prepare('Select content From contents Where id = ?');
@@ -400,24 +405,19 @@ export class SqliteDatabase extends Database {
 			'Inner Join documents d On r.belongsTo = d.id',
 			'Where i.outV = $id and (i.property in (1, 2, 3))'
 		].join(' '));
-
-		this.fileSystem = new FileSystem(this.getProjectRoot(), this.getDocumentInfos());
-		this.uriTransformer = transformerFactory ? transformerFactory(this.getProjectRoot()) : noopTransformer;
-	}
-
-	public load(): void {
-	}
-
-	public close(): void {
-		this.db.close();
+		return Promise.resolve();
 	}
 
 	private readMetaData(): void {
 		let result: MetaDataResult[] = this.db.prepare('Select * from meta').all();
 		if (result === undefined || result.length !== 1) {
-			throw new Error('Failed to read meta data record');
+			throw new Error('Failed to read meta data record.');
 		}
 		let metaData: MetaData = JSON.parse(result[0].value);
+		if (metaData.projectRoot === undefined) {
+			throw new Error('No project root provided.');
+		}
+		this.projectRoot = URI.parse(metaData.projectRoot)
 		if (metaData.compressors !== undefined) {
 			this.vertexLabels = new Map();
 			this.edgeLabels = new Map();
@@ -467,6 +467,14 @@ export class SqliteDatabase extends Database {
 		}
 	}
 
+	public getProjectRoot(): URI {
+		return this.projectRoot;
+	}
+
+	public close(): void {
+		this.db.close();
+	}
+
 	protected getDocumentInfos(): DocumentInfo[] {
 		let result = this.allDocumentsStmt.all();
 		if (result === undefined) {
@@ -475,19 +483,7 @@ export class SqliteDatabase extends Database {
 		return result;
 	}
 
-	public stat(uri: string): FileStat | null {
-		return this.fileSystem.stat(this.uriTransformer.toDatabase(uri));
-	}
-
-	public readDirectory(uri: string): [string, FileType][] {
-		return this.fileSystem.readDirectory(this.uriTransformer.toDatabase(uri));
-	}
-
-	public readFileContent(uri: string): string {
-		let id = this.fileSystem.getFileId(this.uriTransformer.toDatabase(uri));
-		if (id === undefined) {
-			return '';
-		}
+	protected fileContent(id: Id): string {
 		let result: ContentResult = this.getDocumentContentStmt.get(id);
 		if (!result || !result.content) {
 			return '';
@@ -496,7 +492,7 @@ export class SqliteDatabase extends Database {
 	}
 
 	public foldingRanges(uri: string): lsp.FoldingRange[] | undefined {
-		let foldingResult = this.getResultForDocument(this.uriTransformer.toDatabase(uri), EdgeLabels.textDocument_foldingRange);
+		let foldingResult = this.getResultForDocument(this.toDatabase(uri), EdgeLabels.textDocument_foldingRange);
 		if (foldingResult === undefined) {
 			return undefined;
 		}
@@ -504,7 +500,7 @@ export class SqliteDatabase extends Database {
 	}
 
 	public documentSymbols(uri: string): lsp.DocumentSymbol[] | undefined {
-		let symbolResult = this.getResultForDocument(this.uriTransformer.toDatabase(uri), EdgeLabels.textDocument_documentSymbol);
+		let symbolResult = this.getResultForDocument(this.toDatabase(uri), EdgeLabels.textDocument_documentSymbol);
 		if (symbolResult === undefined) {
 			return undefined;
 		}
@@ -552,7 +548,7 @@ export class SqliteDatabase extends Database {
 	}
 
 	public definitions(uri: string, position: lsp.Position): lsp.Location | lsp.Location[] | undefined {
-		let range = this.findRange(this.uriTransformer.toDatabase(uri), position);
+		let range = this.findRange(this.toDatabase(uri), position);
 		if (range === undefined) {
 			return undefined;
 		}
@@ -563,12 +559,12 @@ export class SqliteDatabase extends Database {
 		if (Array.isArray(definitionResult.result)) {
 			return this.asLocations(definitionResult.result);
 		} else {
-			return this.asLocation(definitionResult.result);
+			return undefined;
 		}
 	}
 
 	public hover(uri: string, position: lsp.Position): lsp.Hover | undefined {
-		let range = this.findRange(this.uriTransformer.toDatabase(uri), position);
+		let range = this.findRange(this.toDatabase(uri), position);
 		if (range === undefined) {
 			return undefined;
 		}
@@ -606,7 +602,7 @@ export class SqliteDatabase extends Database {
 	}
 
 	public references(uri: string, position: lsp.Position, context: lsp.ReferenceContext): lsp.Location[] | undefined {
-		let range = this.findRange(this.uriTransformer.toDatabase(uri), position);
+		let range = this.findRange(this.toDatabase(uri), position);
 		if (range === undefined) {
 			return undefined;
 		}
@@ -643,7 +639,7 @@ export class SqliteDatabase extends Database {
 		} else {
 			let result: LocationResultWithProperty[] = this.findRangeFromReferenceResult.all({ id: referenceResult.id });
 			if (result && result.length > 0) {
-				let refLabel = this.getItemEdgeProperty(ItemEdgeProperties.reference);
+				let refLabel = this.getItemEdgeProperty(ItemEdgeProperties.references);
 				for(let item of result) {
 					if (item.property === refLabel || context.includeDeclaration) {
 						locations.push(this.createLocation(item));
@@ -728,7 +724,7 @@ export class SqliteDatabase extends Database {
 
 	private asLocation(value: Id | lsp.Location): lsp.Location {
 		if (lsp.Location.is(value)) {
-			return { range: value.range, uri: this.uriTransformer.fromDatabase(value.uri)};
+			return { range: value.range, uri: this.fromDatabase(value.uri)};
 		} else {
 			const locationRetriever = new LocationRetriever(this.db, 1);
 			locationRetriever.add(value);
@@ -738,7 +734,7 @@ export class SqliteDatabase extends Database {
 	}
 
 	private createLocation(data: LocationResult): lsp.Location {
-		return lsp.Location.create(this.uriTransformer.fromDatabase(data.uri), lsp.Range.create(data.startLine, data.startCharacter, data.endLine, data.endCharacter));
+		return lsp.Location.create(this.fromDatabase(data.uri), lsp.Range.create(data.startLine, data.startCharacter, data.endLine, data.endCharacter));
 	}
 
 	private getResultForDocument(uri: string, label: EdgeLabels.textDocument_documentSymbol): DocumentSymbolResult | undefined;
