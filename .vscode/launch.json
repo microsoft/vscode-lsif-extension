@@ -6,7 +6,7 @@
 			"request": "launch",
 			"name": "Launch Client",
 			"runtimeExecutable": "${execPath}",
-			"args": ["--extensionDevelopmentPath=${workspaceRoot}", "--folder-uri=lsif:///c:/Users/dirkb/Projects/mseng/LanguageServer/Node/jsonrpc/jsonrpc.lsif"],
+			"args": ["--extensionDevelopmentPath=${workspaceRoot}", "--folder-uri=lsif:///c:/Users/dirkb/Projects/mseng/VSCode/vscode-lsif-extension/samples/jsonrpc.lsif"],
 			"outFiles": ["${workspaceRoot}/client/out/**/*.js"],
 			"preLaunchTask": {
 				"type": "npm",

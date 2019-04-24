@@ -111,7 +111,10 @@ export class JsonDatabase extends Database {
 		return new Promise<void>((resolve, reject) => {
 			let input: fs.ReadStream = fs.createReadStream(file, { encoding: 'utf8'});
 			const rd = readline.createInterface(input);
-			rd.on('line', (line) => {
+			rd.on('line', (line: string) => {
+				if (!line || line.length === 0) {
+					return;
+				}
 				let element: Edge | Vertex = JSON.parse(line);
 				switch (element.type) {
 					case ElementTypes.vertex:

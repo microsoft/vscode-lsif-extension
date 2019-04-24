@@ -115,7 +115,7 @@ async function createDatabase(folder: WorkspaceFolder): Promise<Database | undef
 			// report FileNotFound when accessing.
 		}
 	}
-	return Promise.resolve(undefined);
+	return Promise.reject(new Error(`Can't create database for ${folder.uri}`));
 }
 
 function findDatabase(uri: string): Promise<Database> | undefined {
@@ -185,7 +185,11 @@ connection.onInitialized(async () => {
 		for (let folder of workspaceFolders.values()) {
 			const uri: Uri = Uri.parse(folder.uri);
 			if (uri.scheme === LSIF_SCHEME) {
-				await createDatabase(folder);
+				try {
+					await createDatabase(folder);
+				} catch (err) {
+					connection.console.error(err.message);
+				}
 			}
 		}
 	} finally {
