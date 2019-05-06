@@ -118,7 +118,7 @@ export class FileSystem {
 		let parts = uri.split('/');
 		let entry: Entry = this.root;
 		for (const part of parts) {
-			if (!part) {
+			if (!part || part === '.') {
 				continue;
 			}
 			let child: Entry | undefined;
