@@ -8,12 +8,12 @@ import * as lsp from 'vscode-languageserver';
 
 import { Database, UriTransformer } from './database';
 import {
-	Id, EdgeLabels, DefinitionResult, FoldingRangeResult, DocumentSymbolResult, RangeBasedDocumentSymbol, Range, HoverResult, ReferenceResult,
-	ReferenceResultItem, ItemEdgeProperties
+	Id, EdgeLabels, DefinitionResult, FoldingRangeResult, DocumentSymbolResult, RangeBasedDocumentSymbol, Range, HoverResult,
+	ReferenceResult, ItemEdgeProperties
 } from 'lsif-protocol';
 import { MetaData, CompressorDescription, CompressionKind } from './protocol.compress';
 import { DocumentInfo } from './files';
-import URI from 'vscode-uri';
+import { URI } from 'vscode-uri';
 
 interface DecompressorPropertyDescription {
 	name: string;
@@ -379,7 +379,7 @@ export class SqliteDatabase extends Database {
 					'(r.startLine = $line and r.endLine = $line and r.startCharacter <= $character and $character <= r.endCharacter)',
 			  	')'
 		].join(' '));
-		let referToLabel = this.edgeLabels !== undefined ? this.edgeLabels.get(EdgeLabels.refersTo)! : EdgeLabels.refersTo
+		let nextLabel = this.edgeLabels !== undefined ? this.edgeLabels.get(EdgeLabels.next)! : EdgeLabels.next
 		this.findResultStmt = this.db.prepare([
 			'Select v.id, v.label, v.value From vertices v',
 			'Inner join edges e On e.inV = v.id',
@@ -389,7 +389,7 @@ export class SqliteDatabase extends Database {
 			'Select v.id, v.label, v.value from edges e1',
 			'Inner Join edges e2 On e1.inv = e2.outV',
 			'Inner Join vertices v On e2.inV = v.id',
-			`where e1.outV = $source and e1.label = ${referToLabel} and e2.label = $label`
+			`where e1.outV = $source and e1.label = ${nextLabel} and e2.label = $label`
 
 		].join(' '));
 		this.findResultForDocumentStmt = this.db.prepare([
@@ -549,19 +549,20 @@ export class SqliteDatabase extends Database {
 	}
 
 	public definitions(uri: string, position: lsp.Position): lsp.Location | lsp.Location[] | undefined {
-		let range = this.findRange(this.toDatabase(uri), position);
-		if (range === undefined) {
-			return undefined;
-		}
-		let definitionResult = this.getResultForRange(range.id, EdgeLabels.textDocument_definition);
-		if (definitionResult === undefined) {
-			return undefined;
-		}
-		if (Array.isArray(definitionResult.result)) {
-			return this.asLocations(definitionResult.result);
-		} else {
-			return undefined;
-		}
+		return undefined;
+		// let range = this.findRange(this.toDatabase(uri), position);
+		// if (range === undefined) {
+		// 	return undefined;
+		// }
+		// let definitionResult = this.getResultForRange(range.id, EdgeLabels.textDocument_definition);
+		// if (definitionResult === undefined) {
+		// 	return undefined;
+		// }
+		// if (Array.isArray(definitionResult.result)) {
+		// 	return this.asLocations(definitionResult.result);
+		// } else {
+		// 	return undefined;
+		// }
 	}
 
 	public hover(uri: string, position: lsp.Position): lsp.Hover | undefined {
@@ -618,36 +619,36 @@ export class SqliteDatabase extends Database {
 	}
 
 	private resolveReferenceResult(locations: lsp.Location[], referenceResult: ReferenceResult, context: lsp.ReferenceContext): void {
-		if (ReferenceResult.isStatic(referenceResult)) {
-			if (referenceResult.declarations !== undefined && referenceResult.definitions !== undefined && referenceResult.references !== undefined) {
-				const all: ReferenceResultItem[] = [];
-				if (context.includeDeclaration) {
-					all.push(...referenceResult.declarations);
-					all.push(...referenceResult.definitions);
-				}
-				all.push(...referenceResult.references);
-				locations.push(...this.asLocations(all));
-			} else if (referenceResult.referenceResults !== undefined && referenceResult.referenceResults.length > 0) {
-				const vertexRetriever = new VertexRetriever(this.db);
-				for (let item of referenceResult.referenceResults) {
-					vertexRetriever.add(item);
-				}
-				let childResults: ReferenceResult[] = vertexRetriever.run().map(elem => this.decompress(elem));
-				for (let elem of childResults) {
-					this.resolveReferenceResult(locations, elem, context);
-				}
-			}
-		} else {
-			let result: LocationResultWithProperty[] = this.findRangeFromReferenceResult.all({ id: referenceResult.id });
-			if (result && result.length > 0) {
-				let refLabel = this.getItemEdgeProperty(ItemEdgeProperties.references);
-				for(let item of result) {
-					if (item.property === refLabel || context.includeDeclaration) {
-						locations.push(this.createLocation(item));
-					}
-				}
-			}
-		}
+		// if (ReferenceResult.isStatic(referenceResult)) {
+		// 	if (referenceResult.declarations !== undefined && referenceResult.definitions !== undefined && referenceResult.references !== undefined) {
+		// 		const all: ReferenceResultItem[] = [];
+		// 		if (context.includeDeclaration) {
+		// 			all.push(...referenceResult.declarations);
+		// 			all.push(...referenceResult.definitions);
+		// 		}
+		// 		all.push(...referenceResult.references);
+		// 		locations.push(...this.asLocations(all));
+		// 	} else if (referenceResult.referenceResults !== undefined && referenceResult.referenceResults.length > 0) {
+		// 		const vertexRetriever = new VertexRetriever(this.db);
+		// 		for (let item of referenceResult.referenceResults) {
+		// 			vertexRetriever.add(item);
+		// 		}
+		// 		let childResults: ReferenceResult[] = vertexRetriever.run().map(elem => this.decompress(elem));
+		// 		for (let elem of childResults) {
+		// 			this.resolveReferenceResult(locations, elem, context);
+		// 		}
+		// 	}
+		// } else {
+		// 	let result: LocationResultWithProperty[] = this.findRangeFromReferenceResult.all({ id: referenceResult.id });
+		// 	if (result && result.length > 0) {
+		// 		let refLabel = this.getItemEdgeProperty(ItemEdgeProperties.references);
+		// 		for(let item of result) {
+		// 			if (item.property === refLabel || context.includeDeclaration) {
+		// 				locations.push(this.createLocation(item));
+		// 			}
+		// 		}
+		// 	}
+		// }
 	}
 
 	private findDocumentId(uri: string): Id | undefined {

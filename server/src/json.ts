@@ -5,7 +5,7 @@
 import * as fs from 'fs';
 import * as readline from 'readline';
 
-import URI from 'vscode-uri';
+import { URI } from 'vscode-uri';
 import * as SemVer from 'semver';
 
 import * as lsp from 'vscode-languageserver';
@@ -27,6 +27,7 @@ interface Vertices {
 }
 
 type ItemTarget =
+	Range |
 	{ type: ItemEdgeProperties.declarations; range: Range; } |
 	{ type: ItemEdgeProperties.definitions; range: Range; } |
 	{ type: ItemEdgeProperties.references; range: Range; } |
@@ -35,7 +36,7 @@ type ItemTarget =
 interface Out {
 	contains: Map<Id, Document[] | Range[]>;
 	item: Map<Id, ItemTarget[]>;
-	refersTo: Map<Id, ResultSet>;
+	next: Map<Id, ResultSet>;
 	documentSymbol: Map<Id, DocumentSymbolResult>;
 	foldingRange: Map<Id, FoldingRangeResult>;
 	documentLink: Map<Id, DocumentLinkResult>;
@@ -89,7 +90,7 @@ export class JsonDatabase extends Database {
 		this.out = {
 			contains: new Map(),
 			item: new Map(),
-			refersTo: new Map(),
+			next: new Map(),
 			documentSymbol: new Map(),
 			foldingRange: new Map(),
 			documentLink: new Map(),
@@ -139,10 +140,10 @@ export class JsonDatabase extends Database {
 						reject(new Error(`No valid semantic version string. The version is: ${this.version}`));
 						return;
 					}
-					if (!SemVer.satisfies(semVer, "0.3.x")) {
-						reject(new Error(`Requires version 0.3.x but received: ${this.version}`));
-						return;
-					}
+					// if (!SemVer.satisfies(semVer, "0.4.x")) {
+					// 	reject(new Error(`Requires version 0.4.x but received: ${this.version}`));
+					// 	return;
+					// }
 				}
 				resolve();
 			});
@@ -182,19 +183,33 @@ export class JsonDatabase extends Database {
 	}
 
 	private processEdge(edge: Edge): void {
-		let from: Vertex | undefined = this.vertices.all.get(edge.outV);
-		let to: Vertex | undefined = this.vertices.all.get(edge.inV);
-		if (from === void 0) {
-			throw new Error(`No vertex found for Id ${edge.outV}`);
+		let property: ItemEdgeProperties | undefined;
+		if (edge.label === 'item') {
+			property = edge.property;
 		}
-		if (to === void 0) {
-			throw new Error(`No vertex found for Id ${edge.inV}`);
+		if (Edge.is11(edge)) {
+			this.doProcessEdge(edge.label, edge.outV, edge.inV, property);
+		} else if (Edge.is1N(edge)) {
+			for (let inV of edge.inVs) {
+				this.doProcessEdge(edge.label, edge.outV, inV, property);
+			}
+		}
+	}
+
+	private doProcessEdge(label: EdgeLabels, outV: Id, inV: Id, property?: ItemEdgeProperties): void {
+		let from: Vertex | undefined = this.vertices.all.get(outV);
+		let to: Vertex | undefined = this.vertices.all.get(inV);
+		if (from === undefined) {
+			throw new Error(`No vertex found for Id ${outV}`);
+		}
+		if (to === undefined) {
+			throw new Error(`No vertex found for Id ${inV}`);
 		}
 		let values: any[] | undefined;
-		switch (edge.label) {
+		switch (label) {
 			case EdgeLabels.contains:
 				values = this.out.contains.get(from.id);
-				if (values === void 0) {
+				if (values === undefined) {
 					values = [ to as any ];
 					this.out.contains.set(from.id, values);
 				} else {
@@ -205,22 +220,26 @@ export class JsonDatabase extends Database {
 			case EdgeLabels.item:
 				values = this.out.item.get(from.id);
 				let itemTarget: ItemTarget | undefined;
-				switch (edge.property) {
-					case ItemEdgeProperties.references:
-						itemTarget = { type: edge.property, range: to as Range };
-						break;
-					case ItemEdgeProperties.declarations:
-						itemTarget = { type: edge.property, range: to as Range };
-						break;
-					case ItemEdgeProperties.definitions:
-						itemTarget = { type: edge.property, range: to as Range };
-						break;
-					case ItemEdgeProperties.referenceResults:
-						itemTarget = { type: edge.property, result: to as ReferenceResult };
-						break;
+				if (property !== undefined) {
+					switch (property) {
+						case ItemEdgeProperties.references:
+							itemTarget = { type: property, range: to as Range };
+							break;
+						case ItemEdgeProperties.declarations:
+							itemTarget = { type: property, range: to as Range };
+							break;
+						case ItemEdgeProperties.definitions:
+							itemTarget = { type: property, range: to as Range };
+							break;
+						case ItemEdgeProperties.referenceResults:
+							itemTarget = { type: property, result: to as ReferenceResult };
+							break;
+					}
+				} else {
+					itemTarget = to as Range;
 				}
-				if (itemTarget !== void 0) {
-					if (values === void 0) {
+				if (itemTarget !== undefined) {
+					if (values === undefined) {
 						values = [ itemTarget ];
 						this.out.item.set(from.id, values);
 					} else {
@@ -228,8 +247,8 @@ export class JsonDatabase extends Database {
 					}
 				}
 				break;
-			case EdgeLabels.refersTo:
-				this.out.refersTo.set(from.id, to as ResultSet);
+			case EdgeLabels.next:
+				this.out.next.set(from.id, to as ResultSet);
 				break;
 			case EdgeLabels.textDocument_documentSymbol:
 				this.out.documentSymbol.set(from.id, to as DocumentSymbolResult);
@@ -276,11 +295,11 @@ export class JsonDatabase extends Database {
 
 	public foldingRanges(uri: string): lsp.FoldingRange[] | undefined {
 		let document = this.indices.documents.get(this.toDatabase(uri));
-		if (document === void 0) {
+		if (document === undefined) {
 			return undefined;
 		}
 		let foldingRangeResult = this.out.foldingRange.get(document.id);
-		if (foldingRangeResult === void 0) {
+		if (foldingRangeResult === undefined) {
 			return undefined;
 		}
 		let result: lsp.FoldingRange[] = [];
@@ -292,11 +311,11 @@ export class JsonDatabase extends Database {
 
 	public documentSymbols(uri: string): lsp.DocumentSymbol[] | undefined {
 		let document = this.indices.documents.get(this.toDatabase(uri));
-		if (document === void 0) {
+		if (document === undefined) {
 			return undefined;
 		}
 		let documentSymbolResult = this.out.documentSymbol.get(document.id);
-		if (documentSymbolResult === void 0 || documentSymbolResult.result.length === 0) {
+		if (documentSymbolResult === undefined || documentSymbolResult.result.length === 0) {
 			return undefined;
 		}
 		let first = documentSymbolResult.result[0];
@@ -308,7 +327,7 @@ export class JsonDatabase extends Database {
 		} else {
 			for (let item of (documentSymbolResult.result as RangeBasedDocumentSymbol[])) {
 				let converted = this.toDocumentSymbol(item);
-				if (converted !== void 0) {
+				if (converted !== undefined) {
 					result.push(converted);
 				}
 			}
@@ -319,7 +338,7 @@ export class JsonDatabase extends Database {
 	private toDocumentSymbol(value: RangeBasedDocumentSymbol): lsp.DocumentSymbol | undefined {
 		let range = this.vertices.ranges.get(value.id)!;
 		let tag = range.tag;
-		if (tag === void 0 || !(tag.type === 'declaration' || tag.type === 'definition')) {
+		if (tag === undefined || !(tag.type === 'declaration' || tag.type === 'definition')) {
 			return undefined;
 		}
 		let result: lsp.DocumentSymbol = lsp.DocumentSymbol.create(
@@ -330,7 +349,7 @@ export class JsonDatabase extends Database {
 			result.children = [];
 			for (let child of value.children) {
 				let converted = this.toDocumentSymbol(child);
-				if (converted !== void 0) {
+				if (converted !== undefined) {
 					result.children.push(converted);
 				}
 			}
@@ -338,34 +357,14 @@ export class JsonDatabase extends Database {
 		return result;
 	}
 
-	public definitions(uri: string, position: lsp.Position): lsp.Location | lsp.Location[] | undefined {
-		let range = this.findRangeFromPosition(this.toDatabase(uri), position);
-		if (range === void 0) {
-			return undefined;
-		}
-		let definitionResult: DefinitionResult | undefined = this.getResult(range, this.out.definition);
-		if (definitionResult === void 0) {
-			return undefined;
-		}
-		if (Array.isArray(definitionResult.result)) {
-			let result: lsp.Location[] = [];
-			for (let element of definitionResult.result) {
-				result.push(this.asLocation(element));
-			}
-			return result;
-		} else {
-			return undefined;
-		}
-	}
-
 	public hover(uri: string, position: lsp.Position): lsp.Hover | undefined {
 		let range = this.findRangeFromPosition(this.toDatabase(uri), position);
-		if (range === void 0) {
+		if (range === undefined) {
 			return undefined;
 		}
 
 		let hoverResult: HoverResult | undefined = this.getResult(range, this.out.hover);
-		if (hoverResult === void 0) {
+		if (hoverResult === undefined) {
 			return undefined;
 		}
 
@@ -376,139 +375,83 @@ export class JsonDatabase extends Database {
 		};
 	}
 
-	public references(uri: string, position: lsp.Position, context: lsp.ReferenceContext): lsp.Location[] | undefined {
+	public definitions(uri: string, position: lsp.Position): lsp.Location | lsp.Location[] | undefined {
 		let range = this.findRangeFromPosition(this.toDatabase(uri), position);
-		if (range === void 0) {
+		if (range === undefined) {
 			return undefined;
 		}
-
-		let referenceResult: ReferenceResult | undefined = this.getResult(range, this.out.references);
-		if (referenceResult === void 0) {
+		let definitionResult: DefinitionResult | undefined = this.getResult(range, this.out.definition);
+		if (definitionResult === undefined) {
 			return undefined;
 		}
-
-		return this.asReferenceResult(referenceResult, context, new Set());
-	}
-
-	private getResult<T>(range: Range, edges: Map<Id, T>): T | undefined {
-		let result: T | undefined = edges.get(range.id);
-		if (result !== undefined) {
-			return result;
-		}
-		let resultSet = this.out.refersTo.get(range.id);
-		if (resultSet === undefined) {
+		let ranges = this.item(definitionResult);
+		if (ranges === undefined) {
 			return undefined;
 		}
-		return edges.get(resultSet.id);
-	}
-
-	private asReferenceResult(value: ReferenceResult, context: lsp.ReferenceContext, dedup: Set<Id>): lsp.Location[] | undefined {
-		let resolved = this.resolveReferenceResult(value, context.includeDeclaration);
 		let result: lsp.Location[] = [];
-		if (resolved.references !== void 0) {
-			for (let item of resolved.references) {
-				this.addLocation(result, item, dedup);
-			}
-		}
-		if (resolved.declarations !== void 0) {
-			for (let item of resolved.declarations) {
-				this.addLocation(result, item, dedup);
-			}
-		}
-		if (resolved.definitions !== void 0) {
-			for (let item of resolved.definitions) {
-				this.addLocation(result, item, dedup);
-			}
-		}
-		if (value.referenceResults !== void 0) {
-			for (let item of value.referenceResults) {
-				let childReferenceResult = this.vertices.all.get(item) as ReferenceResult;
-				if (childReferenceResult !== void 0) {
-					let childReferences = this.asReferenceResult(childReferenceResult, context, dedup);
-					if (childReferences !== void 0) {
-						result.push(...childReferences);
-					}
-				}
-			}
+		for (let element of ranges) {
+			result.push(this.asLocation(element));
 		}
 		return result;
 	}
 
-	private resolveReferenceResult(value: ReferenceResult, includeDeclaration: boolean): ResolvedReferenceResult {
-		let references: (Range | lsp.Location)[] | undefined;
-		if (value.references !== void 0) {
-			references = [];
-			for (let item of value.references) {
-				if (lsp.Location.is(item)) {
-					references.push(item);
-				} else {
-					let range = this.vertices.ranges.get(item);
-					range !== void 0 && references.push(range);
-				}
+	public references(uri: string, position: lsp.Position, context: lsp.ReferenceContext): lsp.Location[] | undefined {
+		let range = this.findRangeFromPosition(this.toDatabase(uri), position);
+		if (range === undefined) {
+			return undefined;
+		}
+
+		let referenceResult: ReferenceResult | undefined = this.getResult(range, this.out.references);
+		if (referenceResult === undefined) {
+			return undefined;
+		}
+
+		let targets = this.item(referenceResult);
+		if (targets === undefined) {
+			return undefined;
+		}
+		return this.asReferenceResult(targets, context, new Set());
+	}
+
+	private getResult<T>(range: Range, edges: Map<Id, T>): T | undefined {
+		let id: Id | undefined = range.id;
+		do {
+			let result: T | undefined = edges.get(id);
+			if (result !== undefined) {
+				return result;
+			}
+			let next = this.out.next.get(id);
+			id = next !== undefined ? next.id : undefined;
+		} while (id !== undefined);
+		return undefined;
+	}
+
+	private item(value: DefinitionResult): Range[];
+	private item(value: ReferenceResult): ItemTarget[];
+	private item(value: DefinitionResult | ReferenceResult): Range[] | ItemTarget[] | undefined {
+		if (value.label === 'definitionResult') {
+			return this.out.item.get(value.id) as Range[];
+		} else if (value.label === 'referenceResult') {
+			return this.out.item.get(value.id) as ItemTarget[];
+		} else {
+			return undefined;
+		}
+	}
+
+	private asReferenceResult(targets: ItemTarget[], context: lsp.ReferenceContext, dedup: Set<Id>): lsp.Location[] {
+		let result: lsp.Location[] = [];
+		for (let target of targets) {
+			if (target.type === ItemEdgeProperties.declarations && context.includeDeclaration) {
+				this.addLocation(result, target.range, dedup);
+			} else if (target.type === ItemEdgeProperties.definitions && context.includeDeclaration) {
+				this.addLocation(result, target.range, dedup);
+			} else if (target.type === ItemEdgeProperties.references) {
+				this.addLocation(result, target.range, dedup);
+			} else if (target.type === ItemEdgeProperties.referenceResults) {
+				result.push(...this.asReferenceResult(this.item(target.result), context, dedup));
 			}
 		}
-		let declarations: (Range | lsp.Location)[] | undefined;
-		if (includeDeclaration && value.declarations !== void 0) {
-			declarations = [];
-			for (let item of value.declarations) {
-				if (lsp.Location.is(item)) {
-					declarations.push(item);
-				} else {
-					let range = this.vertices.ranges.get(item);
-					range !== void 0 && declarations.push(range);
-				}
-			}
-		}
-		let definitions: (Range | lsp.Location)[] | undefined;
-		if (includeDeclaration && value.definitions !== void 0) {
-			definitions = [];
-			for (let item of value.definitions) {
-				if (lsp.Location.is(item)) {
-					definitions.push(item);
-				} else {
-					let range = this.vertices.ranges.get(item);
-					range !== void 0 && definitions.push(range);
-				}
-			}
-		}
-		let referenceResults: ReferenceResult[] | undefined;
-		if (value.referenceResults) {
-			referenceResults = [];
-			for (let item of value.referenceResults) {
-				let result = this.vertices.all.get(item) as ReferenceResult;
-				result && referenceResults.push(result);
-			}
-		}
-		if (references === void 0 && declarations === void 0 && referenceResults === void 0) {
-			references = [];
-			declarations = [];
-			definitions = [];
-			referenceResults = [];
-			let targets = this.out.item.get(value.id);
-			if (targets) {
-				for (let target of targets) {
-					switch (target.type) {
-						case ItemEdgeProperties.references:
-							references.push(target.range);
-							break;
-						case ItemEdgeProperties.declarations:
-							declarations.push(target.range);
-						case ItemEdgeProperties.definitions:
-							definitions.push(target.range);
-							break;
-						case ItemEdgeProperties.referenceResults:
-							referenceResults.push(target.result);
-							break;
-					}
-				}
-			}
-		}
-		return {
-			references: references || [],
-			declarations: declarations || [],
-			definitions: definitions || [],
-			referenceResults: referenceResults || []
-		};
+		return result;
 	}
 
 	private addLocation(result: lsp.Location[], value: Range | lsp.Location, dedup: Set<Id>): void {
@@ -526,11 +469,11 @@ export class JsonDatabase extends Database {
 
 	private findRangeFromPosition(file: string, position: lsp.Position): Range | undefined {
 		let document = this.indices.documents.get(file);
-		if (document === void 0) {
+		if (document === undefined) {
 			return undefined;
 		}
 		let contains = this.out.contains.get(document.id);
-		if (contains === void 0 || contains.length === 0) {
+		if (contains === undefined || contains.length === 0) {
 			return undefined;
 		}
 
@@ -553,13 +496,12 @@ export class JsonDatabase extends Database {
 		return candidate;
 	}
 
-	private asLocation(value: Id | lsp.Location): lsp.Location {
+	private asLocation(value: Range | lsp.Location): lsp.Location {
 		if (lsp.Location.is(value)) {
 			return value;
 		} else {
-			let range = this.vertices.ranges.get(value)!;
-			let document = this.in.contains.get(range.id)!;
-			return lsp.Location.create(this.fromDatabase((document as Document).uri), this.asRange(range));
+			let document = this.in.contains.get(value.id)!;
+			return lsp.Location.create(this.fromDatabase((document as Document).uri), this.asRange(value));
 		}
 	}
 

@@ -4,7 +4,7 @@
 	"author": "Microsoft Corporation",
 	"publisher": "ms-vscode",
 	"license": "MIT",
-	"version": "0.2.0",
+	"version": "0.3.0",
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/Microsoft/vscode-lsif-extension.git"
@@ -56,9 +56,9 @@
 		"postinstall": "cd client && yarn install && cd ../server && yarn install && cd .."
 	},
 	"devDependencies": {
-		"@types/mocha": "^5.2.0",
+		"@types/mocha": "^5.2.7",
 		"@types/node": "^8.0.0",
-		"electron-rebuild": "^1.8.4",
-		"typescript": "^3.3.4000"
+		"electron-rebuild": "^1.8.5",
+		"typescript": "^3.5.2"
 	}
 }
