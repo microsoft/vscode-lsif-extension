@@ -375,6 +375,26 @@ export class JsonDatabase extends Database {
 		};
 	}
 
+	public declarations(uri: string, position: lsp.Position): lsp.Location | lsp.Location[] | undefined {
+		let range = this.findRangeFromPosition(this.toDatabase(uri), position);
+		if (range === undefined) {
+			return undefined;
+		}
+		let declarationResult: DeclarationResult | undefined = this.getResult(range, this.out.declaration);
+		if (declarationResult === undefined) {
+			return undefined;
+		}
+		let ranges = this.item(declarationResult);
+		if (ranges === undefined) {
+			return undefined;
+		}
+		let result: lsp.Location[] = [];
+		for (let element of ranges) {
+			result.push(this.asLocation(element));
+		}
+		return result;
+	}
+
 	public definitions(uri: string, position: lsp.Position): lsp.Location | lsp.Location[] | undefined {
 		let range = this.findRangeFromPosition(this.toDatabase(uri), position);
 		if (range === undefined) {
@@ -426,10 +446,13 @@ export class JsonDatabase extends Database {
 		return undefined;
 	}
 
+	private item(value: DeclarationResult): Range[];
 	private item(value: DefinitionResult): Range[];
 	private item(value: ReferenceResult): ItemTarget[];
-	private item(value: DefinitionResult | ReferenceResult): Range[] | ItemTarget[] | undefined {
-		if (value.label === 'definitionResult') {
+	private item(value: DeclarationResult | DefinitionResult | ReferenceResult): Range[] | ItemTarget[] | undefined {
+		if (value.label === 'declarationResult') {
+			return this.out.item.get(value.id) as Range[];
+		} else if (value.label === 'definitionResult') {
 			return this.out.item.get(value.id) as Range[];
 		} else if (value.label === 'referenceResult') {
 			return this.out.item.get(value.id) as ItemTarget[];

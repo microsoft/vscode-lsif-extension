@@ -8,7 +8,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 
 import { URI  } from 'vscode-uri';
-import { createConnection, ProposedFeatures, InitializeParams, TextDocumentSyncKind, WorkspaceFolder, ServerCapabilities, TextDocument, TextDocumentPositionParams, TextDocumentIdentifier, BulkUnregistration, BulkRegistration, DocumentSymbolRequest, DocumentSelector, FoldingRangeRequest, HoverRequest, DefinitionRequest, ReferencesRequest, RequestType } from 'vscode-languageserver';
+import { createConnection, ProposedFeatures, InitializeParams, TextDocumentSyncKind, WorkspaceFolder, ServerCapabilities, TextDocument, TextDocumentPositionParams, TextDocumentIdentifier, BulkUnregistration, BulkRegistration, DocumentSymbolRequest, DocumentSelector, FoldingRangeRequest, HoverRequest, DefinitionRequest, ReferencesRequest, RequestType, DeclarationRequest } from 'vscode-languageserver';
 
 import { Database, UriTransformer } from './database';
 import { JsonDatabase } from './json';
@@ -152,6 +152,9 @@ async function checkRegistrations(): Promise<void> {
 		toRegister.add(DefinitionRequest.type, {
 			documentSelector
 		});
+		toRegister.add(DeclarationRequest.type, {
+			documentSelector
+		});
 		toRegister.add(HoverRequest.type, {
 			documentSelector
 		});
@@ -281,15 +284,6 @@ connection.onFoldingRanges(async (params) => {
 	return database.foldingRanges(params.textDocument.uri);
 });
 
-connection.onDefinition(async (params) => {
-	let promise = findDatabase(params.textDocument.uri);
-	if (promise === undefined) {
-		return null;
-	}
-	let database = await promise;
-	return database.definitions(params.textDocument.uri, params.position);
-});
-
 connection.onHover(async (params) => {
 	let promise = findDatabase(params.textDocument.uri);
 	if (promise === undefined) {
@@ -299,6 +293,23 @@ connection.onHover(async (params) => {
 	return database.hover(params.textDocument.uri, params.position);
 });
 
+connection.onDeclaration(async (params) => {
+	let promise = findDatabase(params.textDocument.uri);
+	if (promise === undefined) {
+		return null;
+	}
+	let database = await promise;
+	return database.declarations(params.textDocument.uri, params.position);
+});
+
+connection.onDefinition(async (params) => {
+	let promise = findDatabase(params.textDocument.uri);
+	if (promise === undefined) {
+		return null;
+	}
+	let database = await promise;
+	return database.definitions(params.textDocument.uri, params.position);
+});
 
 connection.onReferences(async (params) => {
 	let promise = findDatabase(params.textDocument.uri);
