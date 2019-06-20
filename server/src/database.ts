@@ -2,7 +2,7 @@
  * Copyright (c) Microsoft Corporation. All rights reserved.
  * Licensed under the MIT License. See License.txt in the project root for license information.
  * ------------------------------------------------------------------------------------------ */
-import URI from 'vscode-uri';
+import { URI } from 'vscode-uri';
 import * as lsp from 'vscode-languageserver';
 import { Range, Id } from 'lsif-protocol';
 
@@ -66,9 +66,11 @@ export abstract class Database {
 
 	public abstract documentSymbols(uri: string): lsp.DocumentSymbol[] | undefined;
 
-	public abstract definitions(uri: string, position: lsp.Position): lsp.Location | lsp.Location[] | undefined;
-
 	public abstract hover(uri: string, position: lsp.Position): lsp.Hover | undefined;
+
+	public abstract declarations(uri: string, position: lsp.Position): lsp.Location | lsp.Location[] | undefined;
+
+	public abstract definitions(uri: string, position: lsp.Position): lsp.Location | lsp.Location[] | undefined;
 
 	public abstract references(uri: string, position: lsp.Position, context: lsp.ReferenceContext): lsp.Location[] | undefined;
 

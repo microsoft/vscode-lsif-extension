@@ -7,8 +7,8 @@ import { promisify } from 'util';
 import * as path from 'path';
 import * as fs from 'fs';
 
-import Uri from 'vscode-uri';
-import { createConnection, ProposedFeatures, InitializeParams, TextDocumentSyncKind, WorkspaceFolder, ServerCapabilities, TextDocument, TextDocumentPositionParams, TextDocumentIdentifier, BulkUnregistration, BulkRegistration, DocumentSymbolRequest, DocumentSelector, FoldingRangeRequest, HoverRequest, DefinitionRequest, ReferencesRequest, RequestType } from 'vscode-languageserver';
+import { URI  } from 'vscode-uri';
+import { createConnection, ProposedFeatures, InitializeParams, TextDocumentSyncKind, WorkspaceFolder, ServerCapabilities, TextDocument, TextDocumentPositionParams, TextDocumentIdentifier, BulkUnregistration, BulkRegistration, DocumentSymbolRequest, DocumentSelector, FoldingRangeRequest, HoverRequest, DefinitionRequest, ReferencesRequest, RequestType, DeclarationRequest } from 'vscode-languageserver';
 
 import { Database, UriTransformer } from './database';
 import { JsonDatabase } from './json';
@@ -46,7 +46,7 @@ class Transformer implements UriTransformer {
 	private lsif: string;
 	private projectRoot: string;
 
-	constructor(lsif: Uri, projectRoot: string) {
+	constructor(lsif: URI, projectRoot: string) {
 		this.lsif = lsif.toString();
 		this.projectRoot = projectRoot;
 	}
@@ -91,7 +91,7 @@ function getDatabaseKey(uri: string): string {
 }
 
 async function createDatabase(folder: WorkspaceFolder): Promise<Database | undefined> {
-	let uri: Uri = Uri.parse(folder.uri);
+	let uri: URI = URI.parse(folder.uri);
 	const fsPath = uri.fsPath;
 	const extName = path.extname(fsPath);
 	if (fs.existsSync(fsPath)) {
@@ -152,6 +152,9 @@ async function checkRegistrations(): Promise<void> {
 		toRegister.add(DefinitionRequest.type, {
 			documentSelector
 		});
+		toRegister.add(DeclarationRequest.type, {
+			documentSelector
+		});
 		toRegister.add(HoverRequest.type, {
 			documentSelector
 		});
@@ -183,7 +186,7 @@ connection.onInitialize((params: InitializeParams) => {
 connection.onInitialized(async () => {
 	try {
 		for (let folder of workspaceFolders.values()) {
-			const uri: Uri = Uri.parse(folder.uri);
+			const uri: URI = URI.parse(folder.uri);
 			if (uri.scheme === LSIF_SCHEME) {
 				try {
 					await createDatabase(folder);
@@ -199,7 +202,7 @@ connection.onInitialized(async () => {
 	// handle updates.
 	connection.workspace.onDidChangeWorkspaceFolders(async (event) => {
 		for (let removed of event.removed) {
-			const uri: Uri = Uri.parse(removed.uri);
+			const uri: URI = URI.parse(removed.uri);
 			if (uri.scheme === LSIF_SCHEME) {
 				const dbKey = getDatabaseKey(removed.uri);
 				const promise = databases.get(dbKey);
@@ -215,7 +218,7 @@ connection.onInitialized(async () => {
 			}
 		}
 		for (let added of event.added) {
-			const uri: Uri = Uri.parse(added.uri);
+			const uri: URI = URI.parse(added.uri);
 			if (uri.scheme === LSIF_SCHEME) {
 				await createDatabase(added);
 			}
@@ -281,15 +284,6 @@ connection.onFoldingRanges(async (params) => {
 	return database.foldingRanges(params.textDocument.uri);
 });
 
-connection.onDefinition(async (params) => {
-	let promise = findDatabase(params.textDocument.uri);
-	if (promise === undefined) {
-		return null;
-	}
-	let database = await promise;
-	return database.definitions(params.textDocument.uri, params.position);
-});
-
 connection.onHover(async (params) => {
 	let promise = findDatabase(params.textDocument.uri);
 	if (promise === undefined) {
@@ -299,6 +293,23 @@ connection.onHover(async (params) => {
 	return database.hover(params.textDocument.uri, params.position);
 });
 
+connection.onDeclaration(async (params) => {
+	let promise = findDatabase(params.textDocument.uri);
+	if (promise === undefined) {
+		return null;
+	}
+	let database = await promise;
+	return database.declarations(params.textDocument.uri, params.position);
+});
+
+connection.onDefinition(async (params) => {
+	let promise = findDatabase(params.textDocument.uri);
+	if (promise === undefined) {
+		return null;
+	}
+	let database = await promise;
+	return database.definitions(params.textDocument.uri, params.position);
+});
 
 connection.onReferences(async (params) => {
 	let promise = findDatabase(params.textDocument.uri);

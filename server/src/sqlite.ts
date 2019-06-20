@@ -8,12 +8,12 @@ import * as lsp from 'vscode-languageserver';
 
 import { Database, UriTransformer } from './database';
 import {
-	Id, EdgeLabels, DefinitionResult, FoldingRangeResult, DocumentSymbolResult, RangeBasedDocumentSymbol, Range, HoverResult, ReferenceResult,
-	ReferenceResultItem, ItemEdgeProperties
+	Id, EdgeLabels, DefinitionResult, FoldingRangeResult, DocumentSymbolResult, RangeBasedDocumentSymbol, Range, HoverResult,
+	ReferenceResult, ItemEdgeProperties, DeclarationResult
 } from 'lsif-protocol';
 import { MetaData, CompressorDescription, CompressionKind } from './protocol.compress';
 import { DocumentInfo } from './files';
-import URI from 'vscode-uri';
+import { URI } from 'vscode-uri';
 
 interface DecompressorPropertyDescription {
 	name: string;
@@ -351,6 +351,8 @@ export class SqliteDatabase extends Database {
 	private findResultViaSetStmt!: Sqlite.Statement;
 	private findResultForDocumentStmt!: Sqlite.Statement;
 	private findRangeFromReferenceResult!: Sqlite.Statement;
+	private findResultFromReferenceResult!: Sqlite.Statement;
+	private findRangeFromResult!: Sqlite.Statement;
 
 	private projectRoot!: URI;
 	private readyPromise!: Promise<void>;
@@ -379,7 +381,7 @@ export class SqliteDatabase extends Database {
 					'(r.startLine = $line and r.endLine = $line and r.startCharacter <= $character and $character <= r.endCharacter)',
 			  	')'
 		].join(' '));
-		let referToLabel = this.edgeLabels !== undefined ? this.edgeLabels.get(EdgeLabels.refersTo)! : EdgeLabels.refersTo
+		let nextLabel = this.edgeLabels !== undefined ? this.edgeLabels.get(EdgeLabels.next)! : EdgeLabels.next
 		this.findResultStmt = this.db.prepare([
 			'Select v.id, v.label, v.value From vertices v',
 			'Inner join edges e On e.inV = v.id',
@@ -389,7 +391,7 @@ export class SqliteDatabase extends Database {
 			'Select v.id, v.label, v.value from edges e1',
 			'Inner Join edges e2 On e1.inv = e2.outV',
 			'Inner Join vertices v On e2.inV = v.id',
-			`where e1.outV = $source and e1.label = ${referToLabel} and e2.label = $label`
+			`where e1.outV = $source and e1.label = ${nextLabel} and e2.label = $label`
 
 		].join(' '));
 		this.findResultForDocumentStmt = this.db.prepare([
@@ -399,11 +401,22 @@ export class SqliteDatabase extends Database {
 			'Where d.uri = $uri and e.label = $label'
 		].join(' '));
 
+		this.findRangeFromResult = this.db.prepare([
+			'Select r.id, r.startLine, r.startCharacter, r.endLine, r.endCharacter, d.uri from ranges r',
+			'Inner Join items i On i.inV = r.id',
+			'Inner Join documents d On r.belongsTo = d.id',
+			'Where i.outV = $id'
+		].join(' '));
 		this.findRangeFromReferenceResult = this.db.prepare([
 			'Select r.id, r.startLine, r.startCharacter, r.endLine, r.endCharacter, i.property, d.uri from ranges r',
 			'Inner Join items i On i.inV = r.id',
 			'Inner Join documents d On r.belongsTo = d.id',
 			'Where i.outV = $id and (i.property in (1, 2, 3))'
+		].join(' '));
+		this.findResultFromReferenceResult = this.db.prepare([
+			'Select v.id, v.label, v.value from vertices v',
+			'Inner Join items i On i.inV = v.id',
+			'Where i.outV = $id and i.property = 4'
 		].join(' '));
 		this.initialize(transformerFactory);
 		return Promise.resolve();
@@ -548,22 +561,6 @@ export class SqliteDatabase extends Database {
 		}
 	}
 
-	public definitions(uri: string, position: lsp.Position): lsp.Location | lsp.Location[] | undefined {
-		let range = this.findRange(this.toDatabase(uri), position);
-		if (range === undefined) {
-			return undefined;
-		}
-		let definitionResult = this.getResultForRange(range.id, EdgeLabels.textDocument_definition);
-		if (definitionResult === undefined) {
-			return undefined;
-		}
-		if (Array.isArray(definitionResult.result)) {
-			return this.asLocations(definitionResult.result);
-		} else {
-			return undefined;
-		}
-	}
-
 	public hover(uri: string, position: lsp.Position): lsp.Hover | undefined {
 		let range = this.findRange(this.toDatabase(uri), position);
 		if (range === undefined) {
@@ -602,6 +599,46 @@ export class SqliteDatabase extends Database {
 		return result;
 	}
 
+	public declarations(uri: string, position: lsp.Position): lsp.Location | lsp.Location[] | undefined {
+		let range = this.findRange(this.toDatabase(uri), position);
+		if (range === undefined) {
+			return undefined;
+		}
+		let declarationResult = this.getResultForRange(range.id, EdgeLabels.textDocument_declaration);
+		if (declarationResult === undefined) {
+			return undefined;
+		}
+
+		let result: lsp.Location[] = [];
+		let queryResult: LocationResult[] = this.findRangeFromResult.all({ id: declarationResult.id });
+		if (queryResult && queryResult.length > 0) {
+			for(let item of queryResult) {
+				result.push(this.createLocation(item));
+			}
+		}
+		return result;
+	}
+
+	public definitions(uri: string, position: lsp.Position): lsp.Location | lsp.Location[] | undefined {
+		let range = this.findRange(this.toDatabase(uri), position);
+		if (range === undefined) {
+			return undefined;
+		}
+		let definitionResult = this.getResultForRange(range.id, EdgeLabels.textDocument_definition);
+		if (definitionResult === undefined) {
+			return undefined;
+		}
+
+		let result: lsp.Location[] = [];
+		let queryResult: LocationResult[] = this.findRangeFromResult.all({ id: definitionResult.id });
+		if (queryResult && queryResult.length > 0) {
+			for(let item of queryResult) {
+				result.push(this.createLocation(item));
+			}
+		}
+		return result;
+	}
+
 	public references(uri: string, position: lsp.Position, context: lsp.ReferenceContext): lsp.Location[] | undefined {
 		let range = this.findRange(this.toDatabase(uri), position);
 		if (range === undefined) {
@@ -613,41 +650,28 @@ export class SqliteDatabase extends Database {
 		}
 
 		let result: lsp.Location[] = [];
-		this.resolveReferenceResult(result, referenceResult, context);
+		this.resolveReferenceResult(result, referenceResult, context, new Set());
 		return result;
 	}
 
-	private resolveReferenceResult(locations: lsp.Location[], referenceResult: ReferenceResult, context: lsp.ReferenceContext): void {
-		if (ReferenceResult.isStatic(referenceResult)) {
-			if (referenceResult.declarations !== undefined && referenceResult.definitions !== undefined && referenceResult.references !== undefined) {
-				const all: ReferenceResultItem[] = [];
-				if (context.includeDeclaration) {
-					all.push(...referenceResult.declarations);
-					all.push(...referenceResult.definitions);
-				}
-				all.push(...referenceResult.references);
-				locations.push(...this.asLocations(all));
-			} else if (referenceResult.referenceResults !== undefined && referenceResult.referenceResults.length > 0) {
-				const vertexRetriever = new VertexRetriever(this.db);
-				for (let item of referenceResult.referenceResults) {
-					vertexRetriever.add(item);
-				}
-				let childResults: ReferenceResult[] = vertexRetriever.run().map(elem => this.decompress(elem));
-				for (let elem of childResults) {
-					this.resolveReferenceResult(locations, elem, context);
-				}
-			}
-		} else {
-			let result: LocationResultWithProperty[] = this.findRangeFromReferenceResult.all({ id: referenceResult.id });
-			if (result && result.length > 0) {
-				let refLabel = this.getItemEdgeProperty(ItemEdgeProperties.references);
-				for(let item of result) {
-					if (item.property === refLabel || context.includeDeclaration) {
-						locations.push(this.createLocation(item));
-					}
+	private resolveReferenceResult(locations: lsp.Location[], referenceResult: ReferenceResult, context: lsp.ReferenceContext, dedup: Set<Id>): void {
+		let qr: LocationResultWithProperty[] = this.findRangeFromReferenceResult.all({ id: referenceResult.id });
+		if (qr && qr.length > 0) {
+			let refLabel = this.getItemEdgeProperty(ItemEdgeProperties.references);
+			for (let item of qr) {
+				if (item.property === refLabel || context.includeDeclaration && !dedup.has(item.id)) {
+					dedup.add(item.id);
+					locations.push(this.createLocation(item));
 				}
 			}
 		}
+		let rqr: VertexResult[] = this.findResultFromReferenceResult.all({ id: referenceResult.id });
+		if (rqr && rqr.length > 0) {
+			for (let item of rqr) {
+				this.resolveReferenceResult(locations, this.decompress(JSON.parse(item.value)), context, dedup);
+			}
+		}
+
 	}
 
 	private findDocumentId(uri: string): Id | undefined {
@@ -665,6 +689,7 @@ export class SqliteDatabase extends Database {
 	}
 
 	private getResultForRange(rangeId: Id, label: EdgeLabels.textDocument_hover): HoverResult | undefined;
+	private getResultForRange(rangeId: Id, label: EdgeLabels.textDocument_declaration): DeclarationResult | undefined;
 	private getResultForRange(rangeId: Id, label: EdgeLabels.textDocument_definition): DefinitionResult | undefined;
 	private getResultForRange(rangeId: Id, label: EdgeLabels.textDocument_references): ReferenceResult | undefined;
 	private getResultForRange(rangeId: Id, label: EdgeLabels): any | undefined {
