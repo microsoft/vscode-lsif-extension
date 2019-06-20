@@ -650,16 +650,17 @@ export class SqliteDatabase extends Database {
 		}
 
 		let result: lsp.Location[] = [];
-		this.resolveReferenceResult(result, referenceResult, context);
+		this.resolveReferenceResult(result, referenceResult, context, new Set());
 		return result;
 	}
 
-	private resolveReferenceResult(locations: lsp.Location[], referenceResult: ReferenceResult, context: lsp.ReferenceContext): void {
+	private resolveReferenceResult(locations: lsp.Location[], referenceResult: ReferenceResult, context: lsp.ReferenceContext, dedup: Set<Id>): void {
 		let qr: LocationResultWithProperty[] = this.findRangeFromReferenceResult.all({ id: referenceResult.id });
 		if (qr && qr.length > 0) {
 			let refLabel = this.getItemEdgeProperty(ItemEdgeProperties.references);
 			for (let item of qr) {
-				if (item.property === refLabel || context.includeDeclaration) {
+				if (item.property === refLabel || context.includeDeclaration && !dedup.has(item.id)) {
+					dedup.add(item.id);
 					locations.push(this.createLocation(item));
 				}
 			}
@@ -667,7 +668,7 @@ export class SqliteDatabase extends Database {
 		let rqr: VertexResult[] = this.findResultFromReferenceResult.all({ id: referenceResult.id });
 		if (rqr && rqr.length > 0) {
 			for (let item of rqr) {
-				this.resolveReferenceResult(locations, this.decompress(JSON.parse(item.value)), context);
+				this.resolveReferenceResult(locations, this.decompress(JSON.parse(item.value)), context, dedup);
 			}
 		}
 

@@ -140,10 +140,10 @@ export class JsonDatabase extends Database {
 						reject(new Error(`No valid semantic version string. The version is: ${this.version}`));
 						return;
 					}
-					// if (!SemVer.satisfies(semVer, "0.4.x")) {
-					// 	reject(new Error(`Requires version 0.4.x but received: ${this.version}`));
-					// 	return;
-					// }
+					if (!SemVer.satisfies(semVer, "0.4.0")) {
+						reject(new Error(`Requires version 0.4.0 but received: ${this.version}`));
+						return;
+					}
 				}
 				resolve();
 			});
