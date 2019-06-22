@@ -684,8 +684,9 @@ export class SqliteDatabase extends Database {
 		if (result === undefined || result.length === 0) {
 			return undefined;
 		}
-		// ToDo we need to sort the result and take the shortest.
-		return result[0];
+		// ToDo we need to sort the result and take the shortest. Since we have a index
+		// on the table the shortest one should come last.
+		return result[result.length - 1];
 	}
 
 	private getResultForRange(rangeId: Id, label: EdgeLabels.textDocument_hover): HoverResult | undefined;
