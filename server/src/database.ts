@@ -41,7 +41,16 @@ export abstract class Database {
 	protected abstract getDocumentInfos(): DocumentInfo[];
 
 	public stat(uri: string): FileStat | null {
-		return this.fileSystem.stat(this.uriTransformer.toDatabase(uri));
+		let transformed = this.uriTransformer.toDatabase(uri);
+		let result = this.fileSystem.stat(transformed);
+		if (result !== null) {
+			return result;
+		}
+		let id = this.findFile(transformed);
+		if (id === undefined) {
+			return null;
+		}
+		return FileStat.createFile();
 	}
 
 	public readDirectory(uri: string): [string, FileType][] {
@@ -49,7 +58,11 @@ export abstract class Database {
 	}
 
 	public readFileContent(uri: string): string | null {
-		let id = this.fileSystem.getFileId(this.uriTransformer.toDatabase(uri));
+		let transformed = this.uriTransformer.toDatabase(uri);
+		let id = this.fileSystem.getFileId(transformed);
+		if (id === undefined) {
+			id = this.findFile(transformed);
+		}
 		if (id === undefined) {
 			return null;
 		}
@@ -59,6 +72,8 @@ export abstract class Database {
 		}
 		return result;
 	}
+
+	protected abstract findFile(uri: string): Id | undefined;
 
 	protected abstract fileContent(id: Id): string | undefined;
 

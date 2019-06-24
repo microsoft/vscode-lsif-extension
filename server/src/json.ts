@@ -285,6 +285,14 @@ export class JsonDatabase extends Database {
 		return result;
 	}
 
+	protected findFile(uri: string): Id | undefined {
+		let result = this.indices.documents.get(uri);
+		if (result == undefined) {
+			return undefined;
+		}
+		return result.id;
+	}
+
 	protected fileContent(id: Id): string | undefined {
 		let document = this.vertices.documents.get(id);
 		if (document === undefined) {
@@ -505,12 +513,11 @@ export class JsonDatabase extends Database {
 			if (item.label !== VertexLabels.range) {
 				continue;
 			}
-			let range = item;
-			if (JsonDatabase.containsPosition(range, position)) {
+			if (JsonDatabase.containsPosition(item, position)) {
 				if (!candidate) {
 					candidate = item;
 				} else {
-					if (JsonDatabase.containsRange(candidate, range)) {
+					if (JsonDatabase.containsRange(candidate, item)) {
 						candidate = item;
 					}
 				}

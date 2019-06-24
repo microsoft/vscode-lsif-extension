@@ -497,6 +497,11 @@ export class SqliteDatabase extends Database {
 		return result;
 	}
 
+	protected findFile(uri: string): Id | undefined {
+		let result = this.findDocumentStmt.get(uri);
+		return result;
+	}
+
 	protected fileContent(id: Id): string {
 		let result: ContentResult = this.getDocumentContentStmt.get(id);
 		if (!result || !result.content) {

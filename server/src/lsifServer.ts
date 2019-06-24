@@ -55,7 +55,12 @@ class Transformer implements UriTransformer {
 			let p = uri.substring(this.lsif.length);
 			return `${this.projectRoot}${p}`;
 		} else {
-			return uri;
+			let parsed = URI.parse(uri);
+			if (parsed.scheme === LSIF_SCHEME && parsed.query) {
+				return parsed.with( { scheme: 'file', query: '' } ).toString(true);
+			} else  {
+				return uri;
+			}
 		}
 	}
 	public fromDatabase(uri: string): string {
@@ -63,7 +68,8 @@ class Transformer implements UriTransformer {
 			let p = uri.substring(this.projectRoot.length);
 			return `${this.lsif}${p}`;
 		} else {
-			return uri;
+			let file = URI.parse(uri);
+			return file.with( { scheme: LSIF_SCHEME, query: this.lsif }).toString(true);
 		}
 	}
 }
@@ -120,6 +126,11 @@ async function createDatabase(folder: WorkspaceFolder): Promise<Database | undef
 
 function findDatabase(uri: string): Promise<Database> | undefined {
 	let sorted = sortedDatabaseKeys();
+	let parsed = URI.parse(uri);
+	if (parsed.query) {
+		// The LSIF URIs are encoded.
+		uri = URI.parse(parsed.query).toString();
+	}
 	if (uri.charAt(uri.length - 1) !== '/') {
 		uri = uri + '/';
 	}

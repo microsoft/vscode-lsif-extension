@@ -6,6 +6,9 @@ import * as path from 'path';
 
 import { Id } from 'lsif-protocol';
 
+const ctime = Date.now();
+const mtime = Date.now();
+
 export namespace FileType {
 	export const Unknown: 0 = 0;
 	export const File: 1 = 1;
@@ -22,6 +25,12 @@ export interface FileStat {
 	size: number;
 }
 
+export namespace FileStat {
+	export function createFile(): FileStat {
+		return { type: FileType.File, ctime: ctime, mtime: mtime, size: 0 };
+	}
+}
+
 export interface DocumentInfo {
 	id: Id;
 	uri: string;
@@ -35,7 +44,7 @@ interface File extends FileStat {
 
 namespace File {
 	export function create(name: string, id: Id): File {
-		return { type: FileType.File, ctime: Date.now(), mtime: Date.now(), size: 0, name, id };
+		return { type: FileType.File, ctime: ctime, mtime: mtime, size: 0, name, id };
 	}
 }
 
