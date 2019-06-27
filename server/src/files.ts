@@ -64,19 +64,28 @@ export type Entry = File | Directory;
 
 export class FileSystem {
 
+	private projectRoot: string;
+	private projectRootWithSlash: string;
 	private outside: Map<string, Id>;
 	private root: Directory;
 
-	constructor(private projectRoot: string, documents: DocumentInfo[]) {
+	constructor(projectRoot: string, documents: DocumentInfo[]) {
+		if (projectRoot.charAt(projectRoot.length - 1) === '/') {
+			this.projectRoot = projectRoot.substr(0, projectRoot.length - 1);
+			this.projectRootWithSlash = projectRoot;
+		} else {
+			this.projectRoot = projectRoot;
+			this.projectRootWithSlash = projectRoot + '/';
+		}
 		this.root = Directory.create('');
 		this.outside = new Map();
 		for (let info of documents) {
 			// Do not show file outside the projectRoot.
-			if (!info.uri.startsWith(projectRoot)) {
+			if (!info.uri.startsWith(this.projectRootWithSlash)) {
 				this.outside.set(info.uri, info.id);
 				continue;
 			}
-			let p = info.uri.substring(projectRoot.length + 1);
+			let p = info.uri.substring(projectRoot.length);
 			let dirname = path.posix.dirname(p);
 			let basename = path.posix.basename(p);
 			let entry = this.lookup(dirname, true);
@@ -87,19 +96,21 @@ export class FileSystem {
 	}
 
 	public stat(uri: string): FileStat | null {
-		if (!uri.startsWith(this.projectRoot)) {
+		let isRoot = this.projectRoot === uri;
+		if (!uri.startsWith(this.projectRootWithSlash) && !isRoot) {
 			return null;
 		}
-		let p = uri.substring(this.projectRoot.length + 1);
+		let p = isRoot ? '' : uri.substring(this.projectRootWithSlash.length);
 		let entry = this.lookup(p, false);
 		return entry ? entry : null;
 	}
 
 	public readDirectory(uri: string): [string, FileType][] {
-		if (!uri.startsWith(this.projectRoot)) {
+		let isRoot = this.projectRoot === uri;
+		if (!uri.startsWith(this.projectRootWithSlash) && !isRoot) {
 			return [];
 		}
-		let p = uri.substring(this.projectRoot.length + 1);
+		let p = isRoot ? '' : uri.substring(this.projectRootWithSlash.length);
 		let entry = this.lookup(p, false);
 		if (entry === undefined || entry.type !== FileType.Directory) {
 			return [];
@@ -112,14 +123,15 @@ export class FileSystem {
 	}
 
 	public getFileId(uri: string): Id | undefined {
+		let isRoot = this.projectRoot === uri;
 		let result = this.outside.get(uri);
 		if (result !== undefined) {
 			return result;
 		}
-		if (!uri.startsWith(this.projectRoot)) {
+		if (!uri.startsWith(this.projectRootWithSlash) && !isRoot) {
 			return undefined;
 		}
-		let entry = this.lookup(uri.substring(this.projectRoot.length + 1));
+		let entry = this.lookup(isRoot ? '' : uri.substring(this.projectRootWithSlash.length));
 		return entry && entry.type === FileType.File ? entry.id : undefined;
 	}
 
