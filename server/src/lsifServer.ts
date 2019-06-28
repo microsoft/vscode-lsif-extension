@@ -11,8 +11,6 @@ import { URI  } from 'vscode-uri';
 import { createConnection, ProposedFeatures, InitializeParams, TextDocumentSyncKind, WorkspaceFolder, ServerCapabilities, TextDocument, TextDocumentPositionParams, TextDocumentIdentifier, BulkUnregistration, BulkRegistration, DocumentSymbolRequest, DocumentSelector, FoldingRangeRequest, HoverRequest, DefinitionRequest, ReferencesRequest, RequestType, DeclarationRequest } from 'vscode-languageserver';
 
 import { Database, UriTransformer } from './database';
-import { JsonDatabase } from './json';
-import { SqliteDatabase } from './sqlite';
 import { FileType, FileStat } from './files';
 
 const LSIF_SCHEME = 'lsif';
@@ -104,9 +102,11 @@ async function createDatabase(folder: WorkspaceFolder): Promise<Database | undef
 		try {
 			let database: Database | undefined;
 			if (extName === '.db') {
-				database = new SqliteDatabase();
+				const module = await import('./sqlite');
+				database = new module.SqliteDatabase();
 			} else if (extName === '.lsif') {
-				database = new JsonDatabase();
+				const module = await import('./json');
+				database = new module.JsonDatabase();
 			}
 			if (database !== undefined) {
 				let promise = database.load(fsPath, (projectRoot: string) => {

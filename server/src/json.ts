@@ -140,8 +140,10 @@ export class JsonDatabase extends Database {
 						reject(new Error(`No valid semantic version string. The version is: ${this.version}`));
 						return;
 					}
-					if (!SemVer.satisfies(semVer, "0.4.0")) {
-						reject(new Error(`Requires version 0.4.0 but received: ${this.version}`));
+					let range: SemVer.Range = new SemVer.Range('>=0.4.0 <0.5.0');
+					range.includePrerelease = true;
+					if (!SemVer.satisfies(semVer, range)) {
+						reject(new Error(`Requires version 0.4.1 but received: ${this.version}`));
 						return;
 					}
 				}
