@@ -77,6 +77,10 @@ interface DocumentsResult {
 	uri: string;
 }
 
+interface BlobResult {
+	content: string;
+}
+
 export class BlobStore extends Database {
 
 	private db!: Sqlite.Database;
@@ -134,8 +138,9 @@ export class BlobStore extends Database {
 	private getBlob(documentId: Id): DocumentBlob {
 		let result = this.blobs.get(documentId);
 		if (result === undefined) {
-			const content = this.findBlobStmt.get(documentId);
-			result = JSON.parse(content) as DocumentBlob;
+			const blobResult: BlobResult = this.findBlobStmt.get(documentId);
+			result = JSON.parse(blobResult.content) as DocumentBlob;
+			this.blobs.set(documentId, result);
 		}
 		return result;
 	}

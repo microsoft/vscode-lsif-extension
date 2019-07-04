@@ -102,8 +102,8 @@ async function createDatabase(folder: WorkspaceFolder): Promise<Database | undef
 		try {
 			let database: Database | undefined;
 			if (extName === '.db') {
-				const module = await import('./graphStore');
-				database = new module.GraphStore();
+				const module = await import('./blobStore');
+				database = new module.BlobStore();
 			} else if (extName === '.lsif') {
 				const module = await import('./json');
 				database = new module.JsonDatabase();
