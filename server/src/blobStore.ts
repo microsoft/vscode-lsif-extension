@@ -81,6 +81,10 @@ interface BlobResult {
 	content: string;
 }
 
+interface DocumentResult {
+	documentId: string;
+}
+
 export class BlobStore extends Database {
 
 	private db!: Sqlite.Database;
@@ -89,11 +93,13 @@ export class BlobStore extends Database {
 	private findDocumentStmt!: Sqlite.Statement;
 	private findBlobStmt!: Sqlite.Statement;
 
+	private version: string;
 	private projectRoot!: URI;
 	private blobs: Map<Id, DocumentBlob>;
 
 	public constructor() {
 		super();
+		this.version = 'v1';
 		this.blobs = new Map();
 	}
 
@@ -101,7 +107,7 @@ export class BlobStore extends Database {
 		this.db = new Sqlite(file, { readonly: true });
 		this.readMetaData();
 		this.allDocumentsStmt = this.db.prepare('Select d.documentId, d.uri From documents d Inner Join versions v On v.documentId = d.documentId Where v.versionId = ?');
-		this.findDocumentStmt = this.db.prepare('Select documentId From documents Where uri = ?');
+		this.findDocumentStmt = this.db.prepare('Select d.documentId From documents d Inner Join versions v On v.documentId = d.documentId Where v.versionId = $version and d.uri = $uri');
 		this.findBlobStmt = this.db.prepare('Select content From blobs Where documentId = ?')
 		this.initialize(transformerFactory);
 		return Promise.resolve();
@@ -128,7 +134,7 @@ export class BlobStore extends Database {
 	}
 
 	protected getDocumentInfos(): DocumentInfo[] {
-		let result: DocumentsResult[] = this.allDocumentsStmt.all('v1');
+		let result: DocumentsResult[] = this.allDocumentsStmt.all(this.version);
 		if (result === undefined) {
 			return [];
 		}
@@ -146,8 +152,8 @@ export class BlobStore extends Database {
 	}
 
 	protected findFile(uri: string): Id | undefined {
-		let result = this.findDocumentStmt.get(uri);
-		return result;
+		let result: DocumentResult = this.findDocumentStmt.get({ version: this.version, uri: uri });
+		return result !== undefined ? result.documentId : undefined;
 	}
 
 	protected fileContent(documentId: Id): string {
@@ -164,6 +170,28 @@ export class BlobStore extends Database {
 	}
 
 	public hover(uri: string, position: lsp.Position): lsp.Hover | undefined {
+		const documentId = this.findFile(this.toDatabase(uri));
+		if (documentId === undefined) {
+			return undefined;
+		}
+
+		const range = this.findRangeFromPosition(documentId, position);
+		if (range === undefined) {
+			return undefined;
+		}
+		const blob = this.getBlob(documentId);
+		if (blob.hovers === undefined) {
+			return undefined;
+		}
+		let current: RangeData | ResultSetData | undefined = range;
+		while (current !== undefined) {
+			if (current.hoverResult !== undefined) {
+				return blob.hovers[current.hoverResult];
+			}
+			current = current.next !== undefined
+				? (blob.resultSets !== undefined ? blob.resultSets[current.next] : undefined)
+				: undefined;
+		}
 		return undefined;
 	}
 
@@ -180,5 +208,57 @@ export class BlobStore extends Database {
 	}
 
 	private resolveReferenceResult(locations: lsp.Location[], referenceResult: ReferenceResult, context: lsp.ReferenceContext, dedup: Set<Id>): void {
+	}
+
+	private findRangeFromPosition(documentId: Id, position: lsp.Position): RangeData | undefined {
+		const blob = this.getBlob(documentId);
+
+		let candidate: RangeData | undefined;
+		for (let key of Object.keys(blob.ranges)) {
+			let range = blob.ranges[key];
+			if (BlobStore.containsPosition(range, position)) {
+				if (!candidate) {
+					candidate = range;
+				} else {
+					if (BlobStore.containsRange(candidate, range)) {
+						candidate = range;
+					}
+				}
+			}
+
+		}
+		return candidate;
+	}
+
+	private static containsPosition(range: lsp.Range, position: lsp.Position): boolean {
+		if (position.line < range.start.line || position.line > range.end.line) {
+			return false;
+		}
+		if (position.line === range.start.line && position.character < range.start.character) {
+			return false;
+		}
+		if (position.line === range.end.line && position.character > range.end.character) {
+			return false;
+		}
+		return true;
+	}
+
+	/**
+	 * Test if `otherRange` is in `range`. If the ranges are equal, will return true.
+	 */
+	public static containsRange(range: lsp.Range, otherRange: lsp.Range): boolean {
+		if (otherRange.start.line < range.start.line || otherRange.end.line < range.start.line) {
+			return false;
+		}
+		if (otherRange.start.line > range.end.line || otherRange.end.line > range.end.line) {
+			return false;
+		}
+		if (otherRange.start.line === range.start.line && otherRange.start.character < range.start.character) {
+			return false;
+		}
+		if (otherRange.end.line === range.end.line && otherRange.end.character > range.end.character) {
+			return false;
+		}
+		return true;
 	}
 }
