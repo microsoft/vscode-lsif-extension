@@ -128,7 +128,7 @@ export class BlobStore extends Database {
 
 	public constructor() {
 		super();
-		this.version = 'v1';
+		this.version = 'v2';
 		this.blobs = new Map();
 	}
 
