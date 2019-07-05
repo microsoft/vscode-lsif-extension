@@ -85,6 +85,31 @@ interface DocumentResult {
 	documentId: string;
 }
 
+interface DefsResult {
+	uri: string;
+	startLine: number;
+	startCharacter: number;
+	endLine: number;
+	endCharacter: number;
+}
+
+interface DeclsResult {
+	uri: string;
+	startLine: number;
+	startCharacter: number;
+	endLine: number;
+	endCharacter: number;
+}
+
+interface RefsResult {
+	uri: string;
+	kind: number;
+	startLine: number;
+	startCharacter: number;
+	endLine: number;
+	endCharacter: number;
+}
+
 export class BlobStore extends Database {
 
 	private db!: Sqlite.Database;
@@ -92,6 +117,9 @@ export class BlobStore extends Database {
 	private allDocumentsStmt!: Sqlite.Statement;
 	private findDocumentStmt!: Sqlite.Statement;
 	private findBlobStmt!: Sqlite.Statement;
+	private findDeclsStmt!: Sqlite.Statement;
+	private findDefsStmt!: Sqlite.Statement;
+	private findRefsStmt!: Sqlite.Statement;
 
 	private version: string;
 	private projectRoot!: URI;
@@ -106,9 +134,35 @@ export class BlobStore extends Database {
 	public load(file: string, transformerFactory: (projectRoot: string) => UriTransformer): Promise<void> {
 		this.db = new Sqlite(file, { readonly: true });
 		this.readMetaData();
-		this.allDocumentsStmt = this.db.prepare('Select d.documentId, d.uri From documents d Inner Join versions v On v.documentId = d.documentId Where v.versionId = ?');
-		this.findDocumentStmt = this.db.prepare('Select d.documentId From documents d Inner Join versions v On v.documentId = d.documentId Where v.versionId = $version and d.uri = $uri');
+		this.allDocumentsStmt = this.db.prepare([
+			'Select d.documentId, d.uri From documents d',
+				'Inner Join versions v On v.documentId = d.documentId',
+				'Where v.versionId = ?'
+		].join(' '));
+		this.findDocumentStmt = this.db.prepare([
+			'Select d.documentId From documents d',
+				'Inner Join versions v On v.documentId = d.documentId',
+				'Where v.versionId = $version and d.uri = $uri'
+		].join(' '));
 		this.findBlobStmt = this.db.prepare('Select content From blobs Where documentId = ?')
+		this.findDeclsStmt =this.db.prepare([
+			'Select doc.uri, d.startLine, d.startCharacter, d.endLine, d.endCharacter From decls d',
+				'Inner Join versions v On d.documentId = v.documentId',
+				'Inner Join documents doc On d.documentId = doc.documentId',
+				'Where v.versionId = $version and d.scheme = $scheme and d.identifier = $identifier'
+		].join(' '));
+		this.findDefsStmt =this.db.prepare([
+			'Select doc.uri, d.startLine, d.startCharacter, d.endLine, d.endCharacter From defs d',
+				'Inner Join versions v On d.documentId = v.documentId',
+				'Inner Join documents doc On d.documentId = doc.documentId',
+				'Where v.versionId = $version and d.scheme = $scheme and d.identifier = $identifier'
+		].join(' '));
+		this.findRefsStmt =this.db.prepare([
+			'Select doc.uri, r.kind, r.startLine, r.startCharacter, r.endLine, r.endCharacter From refs r',
+				'Inner Join versions v On r.documentId = v.documentId',
+				'Inner Join documents doc On r.documentId = doc.documentId',
+				'Where v.versionId = $version and r.scheme = $scheme and r.identifier = $identifier'
+		].join(' '));
 		this.initialize(transformerFactory);
 		return Promise.resolve();
 	}
@@ -170,49 +224,144 @@ export class BlobStore extends Database {
 	}
 
 	public hover(uri: string, position: lsp.Position): lsp.Hover | undefined {
-		const documentId = this.findFile(this.toDatabase(uri));
-		if (documentId === undefined) {
+		const { range, blob } = this.findRangeFromPosition(this.toDatabase(uri), position);
+		if (range === undefined || blob === undefined || blob.hovers === undefined) {
 			return undefined;
 		}
+		return this.findResult(blob.resultSets, blob.hovers, range, 'hoverResult');
+	}
 
-		const range = this.findRangeFromPosition(documentId, position);
-		if (range === undefined) {
+	public declarations(uri: string, position: lsp.Position): lsp.Location | lsp.Location[] | undefined {
+		const { range, blob } = this.findRangeFromPosition(this.toDatabase(uri), position);
+		if (range === undefined || blob === undefined || blob.declarationResults === undefined) {
 			return undefined;
 		}
-		const blob = this.getBlob(documentId);
-		if (blob.hovers === undefined) {
+		let resultData = this.findResult(blob.resultSets, blob.declarationResults, range, 'declarationResult');
+		if (resultData === undefined) {
+			const moniker = this.findMoniker(blob.resultSets, blob.monikers, range);
+			if (moniker === undefined) {
+				return undefined;
+			}
+			return this.findDeclarationsInDB(moniker);
+		}
+		return BlobStore.asLocations(blob.ranges, uri, resultData.values);
+	}
+
+	private findDeclarationsInDB(moniker: MonikerData): lsp.Location[] | undefined {
+		let qResult: DeclsResult[] = this.findDeclsStmt.all({ version: this.version, scheme: moniker.scheme, identifier: moniker.identifier });
+		if (qResult === undefined || qResult.length === 0) {
 			return undefined;
 		}
-		let current: RangeData | ResultSetData | undefined = range;
+		return qResult.map((item) => {
+			return lsp.Location.create(this.fromDatabase(item.uri), lsp.Range.create(item.startLine, item.startCharacter, item.endLine, item.endCharacter));
+		});
+	}
+
+	public definitions(uri: string, position: lsp.Position): lsp.Location | lsp.Location[] | undefined {
+		const { range, blob } = this.findRangeFromPosition(this.toDatabase(uri), position);
+		if (range === undefined || blob === undefined || blob.definitionResults === undefined) {
+			return undefined;
+		}
+		let resultData = this.findResult(blob.resultSets, blob.definitionResults, range, 'definitionResult');
+		if (resultData === undefined) {
+			const moniker = this.findMoniker(blob.resultSets, blob.monikers, range);
+			if (moniker === undefined) {
+				return undefined;
+			}
+			return this.findDefinitionsInDB(moniker);
+		} else {
+			return BlobStore.asLocations(blob.ranges, uri, resultData.values);
+		}
+	}
+
+	private findDefinitionsInDB(moniker: MonikerData): lsp.Location[] | undefined {
+		let qResult: DefsResult[] = this.findDefsStmt.all({ version: this.version, scheme: moniker.scheme, identifier: moniker.identifier });
+		if (qResult === undefined || qResult.length === 0) {
+			return undefined;
+		}
+		return qResult.map((item) => {
+			return lsp.Location.create(this.fromDatabase(item.uri), lsp.Range.create(item.startLine, item.startCharacter, item.endLine, item.endCharacter));
+		});
+	}
+
+	public references(uri: string, position: lsp.Position, context: lsp.ReferenceContext): lsp.Location[] | undefined {
+		const { range, blob } = this.findRangeFromPosition(this.toDatabase(uri), position);
+		if (range === undefined || blob === undefined || blob.referenceResults === undefined) {
+			return undefined;
+		}
+		let resultData = this.findResult(blob.resultSets, blob.referenceResults, range, 'referenceResult');
+		if (resultData === undefined) {
+			const moniker = this.findMoniker(blob.resultSets, blob.monikers, range);
+			if (moniker === undefined) {
+				return undefined;
+			}
+			return this.findReferencesInDB(moniker, context);
+		} else {
+			let result: lsp.Location[] = [];
+			if (context.includeDeclaration && resultData.declarations !== undefined) {
+				result.push(...BlobStore.asLocations(blob.ranges, uri, resultData.declarations));
+			}
+			if (context.includeDeclaration && resultData.definitions !== undefined) {
+				result.push(...BlobStore.asLocations(blob.ranges, uri, resultData.definitions));
+			}
+			if (resultData.references !== undefined) {
+				result.push(...BlobStore.asLocations(blob.ranges, uri, resultData.references));
+			}
+			return result;
+		}
+	}
+
+	private findReferencesInDB(moniker: MonikerData, context: lsp.ReferenceContext): lsp.Location[] | undefined {
+		let qResult: RefsResult[] = this.findRefsStmt.all({ version: this.version, scheme: moniker.scheme, identifier: moniker.identifier });
+		if (qResult === undefined || qResult.length === 0) {
+			return undefined;
+		}
+		let result: lsp.Location[] = [];
+		for (let item of qResult) {
+			if (context.includeDeclaration || item.kind === 2) {
+				result.push(lsp.Location.create(this.fromDatabase(item.uri), lsp.Range.create(item.startLine, item.startCharacter, item.endLine, item.endCharacter)));
+			}
+		}
+		return result;
+	}
+
+	private findResult<T>(resultSets: LiteralMap<ResultSetData> | undefined, map: LiteralMap<T>, data: RangeData | ResultSetData, property: keyof (RangeData | ResultSetData)): T | undefined {
+		let current: RangeData | ResultSetData | undefined = data;
 		while (current !== undefined) {
-			if (current.hoverResult !== undefined) {
-				return blob.hovers[current.hoverResult];
+			let value = current[property];
+			if (value !== undefined) {
+				return map[value];
 			}
 			current = current.next !== undefined
-				? (blob.resultSets !== undefined ? blob.resultSets[current.next] : undefined)
+				? (resultSets !== undefined ? resultSets[current.next] : undefined)
 				: undefined;
 		}
 		return undefined;
 	}
 
-	public declarations(uri: string, position: lsp.Position): lsp.Location | lsp.Location[] | undefined {
-		return undefined;
+	private findMoniker(resultSets: LiteralMap<ResultSetData> | undefined, monikers: LiteralMap<MonikerData> | undefined, data: RangeData | ResultSetData): MonikerData | undefined {
+		if (monikers === undefined) {
+			return undefined;
+		}
+		let current: RangeData | ResultSetData | undefined = data;
+		let result: Id | undefined;
+		while (current !== undefined) {
+			if (current.moniker !== undefined) {
+				result = current.moniker;
+			}
+			current = current.next !== undefined
+				? (resultSets !== undefined ? resultSets[current.next] : undefined)
+				: undefined;
+		}
+		return result !== undefined ? monikers[result] : undefined;
 	}
 
-	public definitions(uri: string, position: lsp.Position): lsp.Location | lsp.Location[] | undefined {
-		return undefined;
-	}
-
-	public references(uri: string, position: lsp.Position, context: lsp.ReferenceContext): lsp.Location[] | undefined {
-		return undefined;
-	}
-
-	private resolveReferenceResult(locations: lsp.Location[], referenceResult: ReferenceResult, context: lsp.ReferenceContext, dedup: Set<Id>): void {
-	}
-
-	private findRangeFromPosition(documentId: Id, position: lsp.Position): RangeData | undefined {
-		const blob = this.getBlob(documentId);
-
+	private findRangeFromPosition(uri: string, position: lsp.Position): { range: RangeData | undefined, blob: DocumentBlob | undefined } {
+		const documentId = this.findFile(uri);
+		if (documentId === undefined) {
+			return { range: undefined, blob: undefined };
+		}
+ 		const blob = this.getBlob(documentId);
 		let candidate: RangeData | undefined;
 		for (let key of Object.keys(blob.ranges)) {
 			let range = blob.ranges[key];
@@ -227,7 +376,14 @@ export class BlobStore extends Database {
 			}
 
 		}
-		return candidate;
+		return { range: candidate, blob};
+	}
+
+	private static asLocations(ranges: LiteralMap<RangeData>, uri: string, ids: Id[]): lsp.Location[] {
+		return ids.map(id => {
+			let range = ranges[id];
+			return lsp.Location.create(uri, lsp.Range.create(range.start.line, range.start.character, range.end.line, range.end.character));
+		});
 	}
 
 	private static containsPosition(range: lsp.Range, position: lsp.Position): boolean {
