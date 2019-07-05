@@ -73,16 +73,16 @@ interface DocumentBlob {
 }
 
 interface DocumentsResult {
-	documentId: string;
+	documentHash: string;
 	uri: string;
 }
 
 interface BlobResult {
-	content: string;
+	content: Buffer;
 }
 
 interface DocumentResult {
-	documentId: string;
+	documentHash: string;
 }
 
 interface DefsResult {
@@ -120,6 +120,7 @@ export class BlobStore extends Database {
 	private findDeclsStmt!: Sqlite.Statement;
 	private findDefsStmt!: Sqlite.Statement;
 	private findRefsStmt!: Sqlite.Statement;
+	private findHoverStmt!: Sqlite.Statement;
 
 	private version: string;
 	private projectRoot!: URI;
@@ -135,33 +136,40 @@ export class BlobStore extends Database {
 		this.db = new Sqlite(file, { readonly: true });
 		this.readMetaData();
 		this.allDocumentsStmt = this.db.prepare([
-			'Select d.documentId, d.uri From documents d',
-				'Inner Join versions v On v.documentId = d.documentId',
-				'Where v.versionId = ?'
+			'Select d.documentHash, d.uri From documents d',
+				'Inner Join versions v On v.hash = d.documentHash',
+				'Where v.version = ?'
 		].join(' '));
 		this.findDocumentStmt = this.db.prepare([
-			'Select d.documentId From documents d',
-				'Inner Join versions v On v.documentId = d.documentId',
-				'Where v.versionId = $version and d.uri = $uri'
+			'Select d.documentHash From documents d',
+				'Inner Join versions v On v.hash = d.documentHash',
+				'Where v.version = $version and d.uri = $uri'
 		].join(' '));
-		this.findBlobStmt = this.db.prepare('Select content From blobs Where documentId = ?')
-		this.findDeclsStmt =this.db.prepare([
+		this.findBlobStmt = this.db.prepare('Select content From blobs Where hash = ?')
+		this.findDeclsStmt = this.db.prepare([
 			'Select doc.uri, d.startLine, d.startCharacter, d.endLine, d.endCharacter From decls d',
-				'Inner Join versions v On d.documentId = v.documentId',
-				'Inner Join documents doc On d.documentId = doc.documentId',
-				'Where v.versionId = $version and d.scheme = $scheme and d.identifier = $identifier'
+				'Inner Join versions v On d.documentHash = v.hash',
+				'Inner Join documents doc On d.documentHash = doc.documentHash',
+				'Where v.version = $version and d.scheme = $scheme and d.identifier = $identifier'
 		].join(' '));
-		this.findDefsStmt =this.db.prepare([
+		this.findDefsStmt = this.db.prepare([
 			'Select doc.uri, d.startLine, d.startCharacter, d.endLine, d.endCharacter From defs d',
-				'Inner Join versions v On d.documentId = v.documentId',
-				'Inner Join documents doc On d.documentId = doc.documentId',
-				'Where v.versionId = $version and d.scheme = $scheme and d.identifier = $identifier'
+				'Inner Join versions v On d.documentHash = v.hash',
+				'Inner Join documents doc On d.documentHash = doc.documentHash',
+				'Where v.version = $version and d.scheme = $scheme and d.identifier = $identifier'
 		].join(' '));
-		this.findRefsStmt =this.db.prepare([
+		this.findRefsStmt = this.db.prepare([
 			'Select doc.uri, r.kind, r.startLine, r.startCharacter, r.endLine, r.endCharacter From refs r',
-				'Inner Join versions v On r.documentId = v.documentId',
-				'Inner Join documents doc On r.documentId = doc.documentId',
-				'Where v.versionId = $version and r.scheme = $scheme and r.identifier = $identifier'
+				'Inner Join versions v On r.documentHash = v.hash',
+				'Inner Join documents doc On r.documentHash = doc.documentHash',
+				'Where v.version = $version and r.scheme = $scheme and r.identifier = $identifier'
+		].join(' '));
+		this.findHoverStmt = this.db.prepare([
+			'Select b.content From blobs b',
+				'Inner Join versions v On b.hash = v.hash',
+				'Inner Join hovers h On h.hoverHash = b.hash',
+				'Where v.version = $version and h.scheme = $scheme and h.identifier = $identifier'
+
 		].join(' '));
 		this.initialize(transformerFactory);
 		return Promise.resolve();
@@ -192,14 +200,14 @@ export class BlobStore extends Database {
 		if (result === undefined) {
 			return [];
 		}
-		return result.map((item) => { return { id: item.documentId, uri: item.uri } });
+		return result.map((item) => { return { id: item.documentHash, uri: item.uri } });
 	}
 
 	private getBlob(documentId: Id): DocumentBlob {
 		let result = this.blobs.get(documentId);
 		if (result === undefined) {
 			const blobResult: BlobResult = this.findBlobStmt.get(documentId);
-			result = JSON.parse(blobResult.content) as DocumentBlob;
+			result = JSON.parse(blobResult.content.toString('utf8')) as DocumentBlob;
 			this.blobs.set(documentId, result);
 		}
 		return result;
@@ -207,7 +215,7 @@ export class BlobStore extends Database {
 
 	protected findFile(uri: string): Id | undefined {
 		let result: DocumentResult = this.findDocumentStmt.get({ version: this.version, uri: uri });
-		return result !== undefined ? result.documentId : undefined;
+		return result !== undefined ? result.documentHash : undefined;
 	}
 
 	protected fileContent(documentId: Id): string {
@@ -228,7 +236,23 @@ export class BlobStore extends Database {
 		if (range === undefined || blob === undefined || blob.hovers === undefined) {
 			return undefined;
 		}
-		return this.findResult(blob.resultSets, blob.hovers, range, 'hoverResult');
+		let result = this.findResult(blob.resultSets, blob.hovers, range, 'hoverResult');
+		if (result !== undefined) {
+			return result;
+		}
+		const moniker = this.findMoniker(blob.resultSets, blob.monikers, range);
+		if (moniker === undefined) {
+			return undefined;
+		}
+		const qResult: BlobResult = this.findHoverStmt.get({ version: this.version, scheme: moniker.scheme, identifier: moniker.identifier });
+		if (qResult === undefined) {
+			return undefined;
+		}
+		result = JSON.parse(qResult.content.toString()) as lsp.Hover;
+		if (result.range === undefined) {
+			result.range = lsp.Range.create(range.start.line, range.start.character, range.end.line, range.end.character);
+		}
+		return result;
 	}
 
 	public declarations(uri: string, position: lsp.Position): lsp.Location | lsp.Location[] | undefined {
@@ -243,8 +267,9 @@ export class BlobStore extends Database {
 				return undefined;
 			}
 			return this.findDeclarationsInDB(moniker);
+		} else {
+			return BlobStore.asLocations(blob.ranges, uri, resultData.values);
 		}
-		return BlobStore.asLocations(blob.ranges, uri, resultData.values);
 	}
 
 	private findDeclarationsInDB(moniker: MonikerData): lsp.Location[] | undefined {
