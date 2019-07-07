@@ -4,7 +4,7 @@
 	"author": "Microsoft Corporation",
 	"publisher": "ms-vscode",
 	"license": "MIT",
-	"version": "0.4.4",
+	"version": "0.4.5",
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/Microsoft/vscode-lsif-extension.git"
