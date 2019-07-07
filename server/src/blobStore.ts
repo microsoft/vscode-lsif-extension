@@ -122,13 +122,13 @@ export class BlobStore extends Database {
 	private findRefsStmt!: Sqlite.Statement;
 	private findHoverStmt!: Sqlite.Statement;
 
-	private version: string;
+	private version!: string;
 	private projectRoot!: URI;
 	private blobs: Map<Id, DocumentBlob>;
 
 	public constructor() {
 		super();
-		this.version = 'v2';
+		this.version;
 		this.blobs = new Map();
 	}
 
@@ -171,6 +171,10 @@ export class BlobStore extends Database {
 				'Where v.version = $version and h.scheme = $scheme and h.identifier = $identifier'
 
 		].join(' '));
+		this.version = this.db.prepare('Select * from versionTags Order by dateTime desc').get().tag;
+		if (typeof this.version !== 'string') {
+			throw new Error('Version tag must be a string');
+		}
 		this.initialize(transformerFactory);
 		return Promise.resolve();
 	}
