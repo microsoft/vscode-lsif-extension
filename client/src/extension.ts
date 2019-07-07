@@ -38,7 +38,7 @@ export function activate(context: ExtensionContext) {
 				0,
 				...toAdd
 			);
-		})
+		});
 	});
 
 	// The server is implemented in node

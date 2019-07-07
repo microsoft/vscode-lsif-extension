@@ -102,8 +102,21 @@ async function createDatabase(folder: WorkspaceFolder): Promise<Database | undef
 		try {
 			let database: Database | undefined;
 			if (extName === '.db') {
-				const module = await import('./sqlite');
-				database = new module.SqliteDatabase();
+				const Sqlite = await import('better-sqlite3');
+				const db = new Sqlite(fsPath, { readonly: true });
+				let format = 'graph';
+				try {
+					format = db.prepare('Select * from format f').get().format;
+				} catch (err) {
+					// Old DBs have no format. Treat is as graph
+				}
+				if (format === 'blob') {
+					const module = await import('./blobStore');
+					database = new module.BlobStore();
+				} else {
+					const module = await import ('./graphStore');
+					database = new module.GraphStore();
+				}
 			} else if (extName === '.lsif') {
 				const module = await import('./json');
 				database = new module.JsonDatabase();

@@ -339,7 +339,7 @@ class LocationRetriever extends Retriever<LocationResult> {
 	}
 }
 
-export class SqliteDatabase extends Database {
+export class GraphStore extends Database {
 
 	private db!: Sqlite.Database;
 
@@ -355,7 +355,6 @@ export class SqliteDatabase extends Database {
 	private findRangeFromResult!: Sqlite.Statement;
 
 	private projectRoot!: URI;
-	private readyPromise!: Promise<void>;
 	private vertexLabels: Map<string, number> | undefined;
 	private edgeLabels: Map<string, number> | undefined;
 	private itemEdgeProperties: Map<string, number> | undefined;
