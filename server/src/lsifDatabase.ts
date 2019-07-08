@@ -366,7 +366,7 @@ export class LsifDatabase {
 		let result: lsp.Location[] = [];
 		let implementationResult: ImplementationResult | undefined = this.getResult(range, this.out.implementation);
 		if (implementationResult && implementationResult.result !== void 0) {
-			const dedup = new Set();
+			const dedup = new Set<Id>();
 			implementationResult.result.forEach((val) => {
 				if (lsp.Location.is(val)) {
 					result.push(val);
