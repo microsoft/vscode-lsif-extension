@@ -30,6 +30,7 @@ type ItemTarget =
 	Range |
 	{ type: ItemEdgeProperties.declarations; range: Range; } |
 	{ type: ItemEdgeProperties.definitions; range: Range; } |
+	{ type: ItemEdgeProperties.implementationResults; range: Range; } |
 	{ type: ItemEdgeProperties.references; range: Range; } |
 	{ type: ItemEdgeProperties.referenceResults; result: ReferenceResult; };
 
@@ -238,6 +239,9 @@ export class JsonDatabase extends Database {
 						case ItemEdgeProperties.definitions:
 							itemTarget = { type: property, range: to as Range };
 							break;
+						case ItemEdgeProperties.implementationResults:
+							itemTarget = { type: property, range: to as Range };
+							break;
 						case ItemEdgeProperties.referenceResults:
 							itemTarget = { type: property, result: to as ReferenceResult };
 							break;
@@ -274,6 +278,9 @@ export class JsonDatabase extends Database {
 				break;
 			case EdgeLabels.textDocument_typeDefinition:
 				this.out.typeDefinition.set(from.id, to as TypeDefinitionResult);
+				break;
+			case EdgeLabels.textDocument_implementation:
+				this.out.implementation.set(from.id, to as ImplementationResult);
 				break;
 			case EdgeLabels.textDocument_hover:
 				this.out.hover.set(from.id, to as HoverResult);
@@ -425,7 +432,31 @@ export class JsonDatabase extends Database {
 		}
 		let result: lsp.Location[] = [];
 		for (let element of ranges) {
-			result.push(this.asLocation(element));
+			if (element.type === ItemEdgeProperties.definitions) {
+				result.push(this.asLocation(element.range));
+			}
+		}
+		return result;
+	}
+
+	public typeDefinition(uri: string, position: lsp.Position): lsp.Location | lsp.Location[] | undefined {
+		let range = this.findRangeFromPosition(this.toDatabase(uri), position);
+		if (range === undefined) {
+			return undefined;
+		}
+		let typeDefinitionResult: TypeDefinitionResult | undefined = this.getResult(range, this.out.typeDefinition);
+		if (typeDefinitionResult === undefined) {
+			return undefined;
+		}
+		let ranges = this.item(typeDefinitionResult);
+		if (ranges === undefined) {
+			return undefined;
+		}
+		let result: lsp.Location[] = [];
+		for (let element of ranges) {
+			if (element.type === ItemEdgeProperties.definitions) {
+				result.push(this.asLocation(element.range));
+			}
 		}
 		return result;
 	}
@@ -448,6 +479,44 @@ export class JsonDatabase extends Database {
 		return this.asReferenceResult(targets, context, new Set());
 	}
 
+	public implementation(uri: string, position: lsp.Position): lsp.Location | lsp.Location[] | undefined {
+		let range = this.findRangeFromPosition(this.toDatabase(uri), position);
+		if (range === undefined) {
+			return undefined;
+		}
+		let implementationResult: ImplementationResult | undefined = this.getResult(range, this.out.implementation);
+		if (implementationResult === undefined) {
+			return undefined;
+		}
+		let ranges = this.item(implementationResult);
+		if (ranges === undefined) {
+			return undefined;
+		}
+		let result: lsp.Location[] = [];
+		for (let element of ranges) {
+			if (element.type === ItemEdgeProperties.implementationResults) {
+				result.push(this.asLocation(element.range));
+			}
+		}
+		return result;
+	}
+
+	public diagnostics(uri: string): lsp.Diagnostic[] | undefined {
+		let document = this.indices.documents.get(this.toDatabase(uri));
+		if (document === undefined) {
+			return undefined;
+		}
+		let diagnostics = this.out.diagnostic.get(document.id);
+		if (diagnostics === undefined) {
+			return undefined;
+		}
+		let result: lsp.Diagnostic[] = [];
+		for (let item of diagnostics.result) {
+			result.push(Object.assign(Object.create(null), item));
+		}
+		return result;
+	}
+
 	private getResult<T>(range: Range, edges: Map<Id, T>): T | undefined {
 		let id: Id | undefined = range.id;
 		do {
@@ -462,13 +531,20 @@ export class JsonDatabase extends Database {
 	}
 
 	private item(value: DeclarationResult): Range[];
-	private item(value: DefinitionResult): Range[];
+	private item(value: DefinitionResult): ItemTarget[];
+	private item(value: TypeDefinitionResult): ItemTarget[];
+	private item(value: ImplementationResult): ItemTarget[];
 	private item(value: ReferenceResult): ItemTarget[];
-	private item(value: DeclarationResult | DefinitionResult | ReferenceResult): Range[] | ItemTarget[] | undefined {
+	private item(value: DeclarationResult | DefinitionResult | TypeDefinitionResult | ImplementationResult | ReferenceResult): Range[] | ItemTarget[] | undefined {
 		if (value.label === 'declarationResult') {
+			this.out.item.get(value.id)
 			return this.out.item.get(value.id) as Range[];
 		} else if (value.label === 'definitionResult') {
-			return this.out.item.get(value.id) as Range[];
+			return this.out.item.get(value.id) as ItemTarget[];
+		} else if (value.label === 'typeDefinitionResult'){
+			return this.out.item.get(value.id) as ItemTarget[];
+		} else if (value.label === 'implementationResult') {
+			return this.out.item.get(value.id) as ItemTarget[];
 		} else if (value.label === 'referenceResult') {
 			return this.out.item.get(value.id) as ItemTarget[];
 		} else {

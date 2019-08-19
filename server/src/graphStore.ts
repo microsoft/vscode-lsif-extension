@@ -658,6 +658,18 @@ export class GraphStore extends Database {
 		return result;
 	}
 
+	public typeDefinition(uri: string, position: lsp.Position): lsp.Location | lsp.Location[] | undefined {
+		throw new Error("Method not implemented.");
+	}
+
+	public implementation(uri: string, position: lsp.Position): lsp.Location | lsp.Location[] | undefined {
+		throw new Error("Method not implemented.");
+	}
+
+	public diagnostics(uri: string): lsp.Diagnostic[] | undefined {
+		throw new Error("Method not implemented.");
+	}
+
 	private resolveReferenceResult(locations: lsp.Location[], referenceResult: ReferenceResult, context: lsp.ReferenceContext, dedup: Set<Id>): void {
 		let qr: LocationResultWithProperty[] = this.findRangeFromReferenceResult.all({ id: referenceResult.id });
 		if (qr && qr.length > 0) {

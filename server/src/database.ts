@@ -89,6 +89,12 @@ export abstract class Database {
 
 	public abstract references(uri: string, position: lsp.Position, context: lsp.ReferenceContext): lsp.Location[] | undefined;
 
+	public abstract typeDefinition(uri: string, position: lsp.Position): lsp.Location | lsp.Location[] | undefined;
+
+	public abstract implementation(uri: string, position: lsp.Position): lsp.Location | lsp.Location[] | undefined;
+
+	public abstract diagnostics(uri: string): lsp.Diagnostic[] | undefined;
+
 	protected asDocumentSymbol(range: Range): lsp.DocumentSymbol | undefined {
 		let tag = range.tag;
 		if (tag === undefined || !(tag.type === 'declaration' || tag.type === 'definition')) {

@@ -340,6 +340,18 @@ export class BlobStore extends Database {
 		}
 	}
 
+	public typeDefinition(uri: string, position: lsp.Position): lsp.Location | lsp.Location[] | undefined {
+		throw new Error("Method not implemented.");
+	}
+
+	public implementation(uri: string, position: lsp.Position): lsp.Location | lsp.Location[] | undefined {
+		throw new Error("Method not implemented.");
+	}
+
+	public diagnostics(uri: string): lsp.Diagnostic[] | undefined {
+		throw new Error("Method not implemented.");
+	}
+
 	private findReferencesInDB(moniker: MonikerData, context: lsp.ReferenceContext): lsp.Location[] | undefined {
 		let qResult: RefsResult[] = this.findRefsStmt.all({ version: this.version, scheme: moniker.scheme, identifier: moniker.identifier });
 		if (qResult === undefined || qResult.length === 0) {
