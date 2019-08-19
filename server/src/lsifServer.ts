@@ -8,7 +8,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 
 import { URI  } from 'vscode-uri';
-import { createConnection, ProposedFeatures, InitializeParams, TextDocumentSyncKind, WorkspaceFolder, ServerCapabilities, TextDocument, TextDocumentPositionParams, TextDocumentIdentifier, BulkUnregistration, BulkRegistration, DocumentSymbolRequest, DocumentSelector, FoldingRangeRequest, HoverRequest, DefinitionRequest, ReferencesRequest, RequestType, DeclarationRequest } from 'vscode-languageserver';
+import { createConnection, ProposedFeatures, InitializeParams, TextDocumentSyncKind, WorkspaceFolder, ServerCapabilities, TextDocument, TextDocumentPositionParams, TextDocumentIdentifier, BulkUnregistration, BulkRegistration, DocumentSymbolRequest, DocumentSelector, FoldingRangeRequest, HoverRequest, DefinitionRequest, ReferencesRequest, RequestType, DeclarationRequest, Diagnostic, DidOpenTextDocumentNotification, DidCloseTextDocumentNotification, TypeDefinitionRequest, ImplementationRequest } from 'vscode-languageserver';
 
 import { Database, UriTransformer } from './database';
 import { FileType, FileStat } from './files';
@@ -50,7 +50,7 @@ class Transformer implements UriTransformer {
 	}
 	public toDatabase(uri: string): string {
 		if (uri.startsWith(this.lsif)) {
-			let p = uri.substring(this.lsif.length);
+			let p = uri.substring(this.lsif.length + 1);
 			return `${this.projectRoot}${p}`;
 		} else {
 			let parsed = URI.parse(uri);
@@ -64,7 +64,7 @@ class Transformer implements UriTransformer {
 	public fromDatabase(uri: string): string {
 		if (uri.startsWith(this.projectRoot)) {
 			let p = uri.substring(this.projectRoot.length);
-			return `${this.lsif}${p}`;
+			return `${this.lsif}/${p}`;
 		} else {
 			let file = URI.parse(uri);
 			return file.with( { scheme: LSIF_SCHEME, query: this.lsif }).toString(true);
@@ -183,6 +183,18 @@ async function checkRegistrations(): Promise<void> {
 			documentSelector
 		});
 		toRegister.add(ReferencesRequest.type, {
+			documentSelector
+		});
+		toRegister.add(TypeDefinitionRequest.type, {
+			documentSelector
+		});
+		toRegister.add(ImplementationRequest.type, {
+			documentSelector
+		});
+		toRegister.add(DidOpenTextDocumentNotification.type, {
+			documentSelector
+		});
+		toRegister.add(DidCloseTextDocumentNotification.type, {
 			documentSelector
 		});
 		registrations = connection.client.register(toRegister);
@@ -342,6 +354,49 @@ connection.onReferences(async (params) => {
 	}
 	let database = await promise;
 	return database.references(params.textDocument.uri, params.position, params.context);
+});
+
+connection.onTypeDefinition(async (params) => {
+	let promise = findDatabase(params.textDocument.uri);
+	if (promise === undefined) {
+		return null;
+	}
+	let database = await promise;
+	return database.typeDefinition(params.textDocument.uri, params.position);
+});
+
+connection.onImplementation(async (params) => {
+	let promise = findDatabase(params.textDocument.uri);
+	if (promise === undefined) {
+		return null;
+	}
+	let database = await promise;
+	return database.implementation(params.textDocument.uri, params.position);
+});
+
+connection.onDidOpenTextDocument(async (params) => {
+	const uri = params.textDocument.uri;
+	let promise = findDatabase(uri);
+	if (promise === undefined) {
+		return;
+	}
+	let database = await promise;
+	const diagnostics: Diagnostic[] | undefined = database.diagnostics(uri);
+	if (!diagnostics) {
+		return;
+	}
+	connection.sendDiagnostics({
+		uri,
+		diagnostics
+	});
+});
+
+connection.onDidCloseTextDocument(async (params) => {
+	const uri = params.textDocument.uri;
+	connection.sendDiagnostics({
+		uri,
+		diagnostics: []
+	});
 });
 
 connection.listen();
