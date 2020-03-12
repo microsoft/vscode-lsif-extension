@@ -56,8 +56,8 @@
 		"postinstall": "cd client && yarn install && cd ../server && yarn install && cd .."
 	},
 	"devDependencies": {
-		"@types/mocha": "^5.2.7",
-		"@types/node": "^8.0.0",
-		"typescript": "^3.5.2"
+		"@types/mocha": "^7.0.2",
+		"@types/node": "12.12.29",
+		"typescript": "^3.8.3"
 	}
 }
