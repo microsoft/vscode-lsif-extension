@@ -56,7 +56,7 @@ interface Directory extends FileStat {
 
 namespace Directory {
 	export function create(name: string): Directory {
-		return { type: FileType.Directory, ctime: Date.now(), mtime: Date.now(), size: 0, name, children: new Map() }
+		return { type: FileType.Directory, ctime: Date.now(), mtime: Date.now(), size: 0, name, children: new Map() };
 	}
 }
 
