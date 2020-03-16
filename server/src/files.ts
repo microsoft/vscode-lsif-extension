@@ -66,7 +66,7 @@ export class FileSystem {
 
 	private projectRoot: string;
 	private projectRootWithSlash: string;
-	private outside: Map<string, Id>;
+	private filesOutsideProjectRoot: Map<string, Id>;
 	private root: Directory;
 
 	constructor(projectRoot: string, documents: DocumentInfo[]) {
@@ -78,11 +78,11 @@ export class FileSystem {
 			this.projectRootWithSlash = projectRoot + '/';
 		}
 		this.root = Directory.create('');
-		this.outside = new Map();
+		this.filesOutsideProjectRoot = new Map();
 		for (let info of documents) {
 			// Do not show file outside the projectRoot.
 			if (!info.uri.startsWith(this.projectRootWithSlash)) {
-				this.outside.set(info.uri, info.id);
+				this.filesOutsideProjectRoot.set(info.uri, info.id);
 				continue;
 			}
 			let p = info.uri.substring(projectRoot.length);
@@ -96,6 +96,9 @@ export class FileSystem {
 	}
 
 	public stat(uri: string): FileStat | null {
+		if (this.filesOutsideProjectRoot.has(uri)) {
+			return { type: FileType.File, ctime, mtime, size: 0 };
+		}
 		let isRoot = this.projectRoot === uri;
 		if (!uri.startsWith(this.projectRootWithSlash) && !isRoot) {
 			return null;
@@ -123,11 +126,11 @@ export class FileSystem {
 	}
 
 	public getFileId(uri: string): Id | undefined {
-		let isRoot = this.projectRoot === uri;
-		let result = this.outside.get(uri);
+		let result = this.filesOutsideProjectRoot.get(uri);
 		if (result !== undefined) {
 			return result;
 		}
+		let isRoot = this.projectRoot === uri;
 		if (!uri.startsWith(this.projectRootWithSlash) && !isRoot) {
 			return undefined;
 		}

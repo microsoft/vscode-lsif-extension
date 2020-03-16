@@ -15,9 +15,8 @@ import {
 	ElementTypes, VertexLabels, EdgeLabels, ItemEdgeProperties
 } from 'lsif-protocol';
 
-import { FileType, DocumentInfo, FileStat } from './files';
+import { DocumentInfo } from './files';
 import { Database, UriTransformer } from './database';
-import { resolve } from 'vscode-languageserver/lib/files';
 
 interface Vertices {
 	all: Map<Id, Vertex>;
@@ -55,13 +54,6 @@ interface In {
 
 interface Indices {
 	documents: Map<string, Document>;
-}
-
-interface ResolvedReferenceResult {
-	references: (Range | lsp.Location)[];
-	declarations: (Range | lsp.Location)[];
-	definitions: (Range | lsp.Location)[];
-	referenceResults: ReferenceResult[];
 }
 
 export class JsonDatabase extends Database {
@@ -105,7 +97,7 @@ export class JsonDatabase extends Database {
 
 		this.in = {
 			contains: new Map()
-		}
+		};
 	}
 
 	public load(file: string, transformerFactory: (projectRoot: string) => UriTransformer): Promise<void> {
@@ -128,8 +120,8 @@ export class JsonDatabase extends Database {
 							break;
 					}
 				} catch (error) {
-						input.destroy()
-						reject(error)
+					input.destroy();
+					reject(error);
 				}
 			});
 			rd.on('close', () => {
@@ -294,7 +286,7 @@ export class JsonDatabase extends Database {
 
 	protected findFile(uri: string): Id | undefined {
 		let result = this.indices.documents.get(uri);
-		if (result == undefined) {
+		if (result === undefined) {
 			return undefined;
 		}
 		return result.id;
@@ -359,7 +351,7 @@ export class JsonDatabase extends Database {
 		let result: lsp.DocumentSymbol = lsp.DocumentSymbol.create(
 			tag.text, tag.detail || '', tag.kind,
 			tag.fullRange, this.asRange(range)
-		)
+		);
 		if (value.children && value.children.length > 0) {
 			result.children = [];
 			for (let child of value.children) {
