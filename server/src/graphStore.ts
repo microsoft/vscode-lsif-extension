@@ -82,6 +82,12 @@ class Decompressor {
 			}
 			let decompressor: Decompressor | undefined;
 			switch (property.compressionKind) {
+				case CompressionKind.id:
+					result[property.name] = value;
+					break;
+				case CompressionKind.ids:
+					result[property.name] = value;
+					break;
 				case CompressionKind.raw:
 					result[property.name] = value;
 					break;
@@ -129,7 +135,7 @@ class Decompressor {
 						} else if (Array.isArray(element) && element.length > 0 && typeof element[0] === 'number') {
 							decompressor = Decompressor.get(element[0]);
 							if (decompressor === undefined) {
-								throw new Error(`No decompression found for property ${property.name} and id ${element[0]}`)
+								throw new Error(`No decompression found for property ${property.name} and id ${element[0]}`);
 							}
 							convertedArray.push(decompressor.decompress(element));
 						} else {
@@ -152,7 +158,7 @@ class Decompressor {
 							} else if (Array.isArray(element) && element.length > 0 && typeof element[0] === 'number') {
 								decompressor = Decompressor.get(element[0]);
 								if (decompressor === undefined) {
-									throw new Error(`No decompression found for property ${property.name} and id ${element[0]}`)
+									throw new Error(`No decompression found for property ${property.name} and id ${element[0]}`);
 								}
 								(convertedAny as any[]).push(decompressor.decompress(element));
 							} else {
@@ -166,7 +172,7 @@ class Decompressor {
 					result[property.name] = convertedAny;
 					break;
 				default:
-					throw new Error(`Compression kind ${property.compressionKind} unknown.`)
+					throw new Error(`Compression kind ${property.compressionKind} unknown.`);
 			}
 		}
 		return result;
@@ -276,7 +282,7 @@ abstract class Retriever<T extends IdResult> {
 	}
 
 	protected prepare(stmt: string, size: number): Sqlite.Statement {
-		return this.db.prepare(`${stmt} (${new Array(size).fill('?').join(',')})`)
+		return this.db.prepare(`${stmt} (${new Array(size).fill('?').join(',')})`);
 	}
 
 	protected abstract getFullStatement(size: number): Sqlite.Statement;
@@ -294,7 +300,7 @@ class VertexRetriever extends Retriever<VertexResult> {
 	private static preparedStatements: Map<number, Sqlite.Statement> = new Map();
 
 	public constructor(db: Sqlite.Database, batchSize: number = 16) {
-		super('VertexRetriever', db, batchSize)
+		super('VertexRetriever', db, batchSize);
 	}
 
 	protected getFullStatement(size: number): Sqlite.Statement {
@@ -322,7 +328,7 @@ class LocationRetriever extends Retriever<LocationResult> {
 	private static preparedStatements: Map<number, Sqlite.Statement> = new Map();
 
 	public constructor(db: Sqlite.Database, batchSize: number = 16) {
-		super('LocationRetriever', db, batchSize)
+		super('LocationRetriever', db, batchSize);
 	}
 
 	protected getFullStatement(size: number): Sqlite.Statement {
@@ -348,6 +354,7 @@ export class GraphStore extends Database {
 	private findRangeStmt!: Sqlite.Statement;
 	private findDocumentStmt!: Sqlite.Statement;
 	private findResultStmt!: Sqlite.Statement;
+	private findNextVertexStmt!: Sqlite.Statement;
 	private findResultViaSetStmt!: Sqlite.Statement;
 	private findResultForDocumentStmt!: Sqlite.Statement;
 	private findRangeFromReferenceResult!: Sqlite.Statement;
@@ -369,6 +376,7 @@ export class GraphStore extends Database {
 		this.allDocumentsStmt = this.db.prepare('Select id, uri From documents');
 		this.getDocumentContentStmt = this.db.prepare('Select content From contents Where id = ?');
 		this.findDocumentStmt = this.db.prepare('Select id From documents Where uri = ?');
+		/* eslint-disable indent */
 		this.findRangeStmt = this.db.prepare([
 			'Select r.id, r.startLine, r.startCharacter, r.endline, r.endCharacter From ranges r',
 			'Inner Join documents d On r.belongsTo = d.id',
@@ -380,7 +388,8 @@ export class GraphStore extends Database {
 					'(r.startLine = $line and r.endLine = $line and r.startCharacter <= $character and $character <= r.endCharacter)',
 			  	')'
 		].join(' '));
-		let nextLabel = this.edgeLabels !== undefined ? this.edgeLabels.get(EdgeLabels.next)! : EdgeLabels.next
+		/* eslint-enable indent */
+		let nextLabel = this.edgeLabels !== undefined ? this.edgeLabels.get(EdgeLabels.next)! : EdgeLabels.next;
 		this.findResultStmt = this.db.prepare([
 			'Select v.id, v.label, v.value From vertices v',
 			'Inner join edges e On e.inV = v.id',
@@ -391,7 +400,10 @@ export class GraphStore extends Database {
 			'Inner Join edges e2 On e1.inv = e2.outV',
 			'Inner Join vertices v On e2.inV = v.id',
 			`where e1.outV = $source and e1.label = ${nextLabel} and e2.label = $label`
-
+		].join(' '));
+		this,this.findNextVertexStmt = this.db.prepare([
+			'Select e.inV From edges e',
+			`Where e.outV = $source and e.label = ${nextLabel}`
 		].join(' '));
 		this.findResultForDocumentStmt = this.db.prepare([
 			'Select v.id, v.label, v.value from vertices v',
@@ -430,7 +442,7 @@ export class GraphStore extends Database {
 		if (metaData.projectRoot === undefined) {
 			throw new Error('No project root provided.');
 		}
-		this.projectRoot = URI.parse(metaData.projectRoot)
+		this.projectRoot = URI.parse(metaData.projectRoot);
 		if (metaData.compressors !== undefined) {
 			this.vertexLabels = new Map();
 			this.edgeLabels = new Map();
@@ -534,7 +546,7 @@ export class GraphStore extends Database {
 				if (element.children) {
 					element.children.forEach(collectRanges);
 				}
-			}
+			};
 			let convert = (result: lsp.DocumentSymbol[], elements: RangeBasedDocumentSymbol[], ranges: Map<Id, Range>) => {
 				for (let element of elements) {
 					let range = ranges.get(element.id);
@@ -549,7 +561,7 @@ export class GraphStore extends Database {
 						}
 					}
 				}
-			}
+			};
 			(symbolResult.result as RangeBasedDocumentSymbol[]).forEach(collectRanges);
 			let data = vertexRetriever.run();
 			let ranges: Map<Id, Range> = new Map();
@@ -698,17 +710,23 @@ export class GraphStore extends Database {
 	private getResultForRange(rangeId: Id, label: EdgeLabels.textDocument_definition): DefinitionResult | undefined;
 	private getResultForRange(rangeId: Id, label: EdgeLabels.textDocument_references): ReferenceResult | undefined;
 	private getResultForRange(rangeId: Id, label: EdgeLabels): any | undefined {
-		let rows = this.findResultStmt.all({ source: rangeId, label: this.getEdgeLabel(label)});
+		let currentId = rangeId;
 		let result: any | undefined;
-		if (rows.length > 0) {
-			result = rows[0];
-		}
-		if (result === undefined) {
-			rows = this.findResultViaSetStmt.all({ source: rangeId, label: this.getEdgeLabel(label)});
-			if (rows === undefined || rows.length !== 1) {
-				return undefined;
+		do {
+			const rows = this.findResultStmt.all({ source: currentId, label: this.getEdgeLabel(label)});
+			if (rows.length > 0) {
+				result = rows[0];
+				break;
 			}
-			result = rows[0];
+			const next = this.findNextVertexStmt.all({ source: currentId });
+			if (next.length === 0) {
+				result = undefined;
+				break;
+			}
+			currentId = next[0].inV;
+		} while (currentId !== undefined);
+		if (result === undefined) {
+			return undefined;
 		}
 		return this.decompress(JSON.parse(result.value));
 	}
