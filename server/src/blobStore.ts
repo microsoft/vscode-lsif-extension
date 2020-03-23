@@ -82,6 +82,7 @@ interface BlobResult {
 }
 
 interface DocumentResult {
+	id: Id;
 	documentHash: string;
 }
 
@@ -135,6 +136,7 @@ export class BlobStore extends Database {
 	public load(file: string, transformerFactory: (projectRoot: string) => UriTransformer): Promise<void> {
 		this.db = new Sqlite(file, { readonly: true });
 		this.readMetaData();
+		/* eslint-disable indent */
 		this.allDocumentsStmt = this.db.prepare([
 			'Select d.documentHash, d.uri From documents d',
 				'Inner Join versions v On v.hash = d.documentHash',
@@ -145,7 +147,7 @@ export class BlobStore extends Database {
 				'Inner Join versions v On v.hash = d.documentHash',
 				'Where v.version = $version and d.uri = $uri'
 		].join(' '));
-		this.findBlobStmt = this.db.prepare('Select content From blobs Where hash = ?')
+		this.findBlobStmt = this.db.prepare('Select content From blobs Where hash = ?');
 		this.findDeclsStmt = this.db.prepare([
 			'Select doc.uri, d.startLine, d.startCharacter, d.endLine, d.endCharacter From decls d',
 				'Inner Join versions v On d.documentHash = v.hash',
@@ -171,6 +173,7 @@ export class BlobStore extends Database {
 				'Where v.version = $version and h.scheme = $scheme and h.identifier = $identifier'
 
 		].join(' '));
+		/* eslint-enable indent */
 		this.version = this.db.prepare('Select * from versionTags Order by dateTime desc').get().tag;
 		if (typeof this.version !== 'string') {
 			throw new Error('Version tag must be a string');
@@ -185,10 +188,6 @@ export class BlobStore extends Database {
 			throw new Error('Failed to read meta data record.');
 		}
 		let metaData: MetaData = JSON.parse(result[0].value);
-		if (metaData.projectRoot === undefined) {
-			throw new Error('No project root provided.');
-		}
-		this.projectRoot = URI.parse(metaData.projectRoot);
 	}
 
 	public getProjectRoot(): URI {
@@ -204,7 +203,7 @@ export class BlobStore extends Database {
 		if (result === undefined) {
 			return [];
 		}
-		return result.map((item) => { return { id: item.documentHash, uri: item.uri } });
+		return result.map((item) => { return { id: item.documentHash, uri: item.uri, hash: item.documentHash }; });
 	}
 
 	private getBlob(documentId: Id): DocumentBlob {
@@ -217,13 +216,13 @@ export class BlobStore extends Database {
 		return result;
 	}
 
-	protected findFile(uri: string): Id | undefined {
+	protected findFile(uri: string): { id: Id, hash: string | undefined }| undefined {
 		let result: DocumentResult = this.findDocumentStmt.get({ version: this.version, uri: uri });
-		return result !== undefined ? result.documentHash : undefined;
+		return result !== undefined ? { id: result.id, hash: result.documentHash} : undefined;
 	}
 
-	protected fileContent(documentId: Id): string {
-		const blob = this.getBlob(documentId);
+	protected fileContent(info: { id: Id; hash: string | undefined }): string {
+		const blob = this.getBlob(info.id);
 		return Buffer.from(blob.contents).toString('base64');
 	}
 
@@ -390,7 +389,7 @@ export class BlobStore extends Database {
 		if (documentId === undefined) {
 			return { range: undefined, blob: undefined };
 		}
- 		const blob = this.getBlob(documentId);
+ 		const blob = this.getBlob(documentId.id);
 		let candidate: RangeData | undefined;
 		for (let key of Object.keys(blob.ranges)) {
 			let range = blob.ranges[key];

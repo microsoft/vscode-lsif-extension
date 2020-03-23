@@ -34,17 +34,19 @@ export namespace FileStat {
 export interface DocumentInfo {
 	id: Id;
 	uri: string;
+	hash: string | undefined;
 }
 
 interface File extends FileStat {
 	type: 1;
 	name: string;
 	id: Id;
+	hash: string | undefined;
 }
 
 namespace File {
-	export function create(name: string, id: Id): File {
-		return { type: FileType.File, ctime: ctime, mtime: mtime, size: 0, name, id };
+	export function create(name: string, id: Id, hash: string | undefined): File {
+		return { type: FileType.File, ctime: ctime, mtime: mtime, size: 0, name, id, hash };
 	}
 }
 
@@ -66,7 +68,7 @@ export class FileSystem {
 
 	private projectRoot: string;
 	private projectRootWithSlash: string;
-	private filesOutsideProjectRoot: Map<string, Id>;
+	private filesOutsideProjectRoot: Map<string, { id: Id, hash: string | undefined }>;
 	private root: Directory;
 
 	constructor(projectRoot: string, documents: DocumentInfo[]) {
@@ -82,7 +84,7 @@ export class FileSystem {
 		for (let info of documents) {
 			// Do not show file outside the projectRoot.
 			if (!info.uri.startsWith(this.projectRootWithSlash)) {
-				this.filesOutsideProjectRoot.set(info.uri, info.id);
+				this.filesOutsideProjectRoot.set(info.uri, info);
 				continue;
 			}
 			let p = info.uri.substring(projectRoot.length);
@@ -90,7 +92,7 @@ export class FileSystem {
 			let basename = path.posix.basename(p);
 			let entry = this.lookup(dirname, true);
 			if (entry && entry.type === FileType.Directory) {
-				entry.children.set(basename, File.create(basename, info.id));
+				entry.children.set(basename, File.create(basename, info.id, info.hash));
 			}
 		}
 	}
@@ -125,7 +127,7 @@ export class FileSystem {
 		return result;
 	}
 
-	public getFileId(uri: string): Id | undefined {
+	public getFileInfo(uri: string): { id: Id, hash: string | undefined } | undefined {
 		let result = this.filesOutsideProjectRoot.get(uri);
 		if (result !== undefined) {
 			return result;
@@ -135,7 +137,7 @@ export class FileSystem {
 			return undefined;
 		}
 		let entry = this.lookup(isRoot ? '' : uri.substring(this.projectRootWithSlash.length));
-		return entry && entry.type === FileType.File ? entry.id : undefined;
+		return entry && entry.type === FileType.File ? entry : undefined;
 	}
 
 	private lookup(uri: string, create: boolean = false): Entry | undefined {

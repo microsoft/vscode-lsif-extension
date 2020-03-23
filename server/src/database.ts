@@ -16,7 +16,7 @@ export interface UriTransformer {
 export const noopTransformer: UriTransformer = {
 	toDatabase: uri => uri,
 	fromDatabase: uri => uri
-}
+};
 
 export abstract class Database {
 
@@ -59,23 +59,23 @@ export abstract class Database {
 
 	public readFileContent(uri: string): string | null {
 		let transformed = this.uriTransformer.toDatabase(uri);
-		let id = this.fileSystem.getFileId(transformed);
-		if (id === undefined) {
-			id = this.findFile(transformed);
+		let info = this.fileSystem.getFileInfo(transformed);
+		if (info === undefined) {
+			info = this.findFile(transformed);
 		}
-		if (id === undefined) {
+		if (info === undefined) {
 			return null;
 		}
-		let result = this.fileContent(id);
+		let result = this.fileContent(info);
 		if (result === undefined) {
 			return null;
 		}
 		return result;
 	}
 
-	protected abstract findFile(uri: string): Id | undefined;
+	protected abstract findFile(uri: string):{ id: Id; hash: string | undefined; } | undefined;
 
-	protected abstract fileContent(id: Id): string | undefined;
+	protected abstract fileContent( info: { id: Id; hash: string | undefined; } ) : string | undefined;
 
 	public abstract foldingRanges(uri: string): lsp.FoldingRange[] | undefined;
 
@@ -97,7 +97,7 @@ export abstract class Database {
 		return lsp.DocumentSymbol.create(
 			tag.text, tag.detail || '', tag.kind,
 			tag.fullRange, this.asRange(range)
-		)
+		);
 	}
 
 	protected asRange(value: Range): lsp.Range {

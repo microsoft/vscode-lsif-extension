@@ -647,12 +647,12 @@ log-symbols@^2.2.0:
   dependencies:
     chalk "^2.0.1"
 
-lsif-protocol@0.4.0:
-  version "0.4.0"
-  resolved "https://registry.yarnpkg.com/lsif-protocol/-/lsif-protocol-0.4.0.tgz#64d8a4e9c065800538e69cbed7b972c6ead0506d"
-  integrity sha512-SDESdBHrn+bJvNiAIBgaiEF9MrMW5aSxxrj9t+3jFReGBlWpjm8CnfG+GIgwC6bhFjr3n+vpUWDO7xFPvhtvkw==
+lsif-protocol@0.5.0-next.1:
+  version "0.5.0-next.1"
+  resolved "https://registry.yarnpkg.com/lsif-protocol/-/lsif-protocol-0.5.0-next.1.tgz#ea0fdae6f6d3969d30d9c655b8286f65220112c7"
+  integrity sha512-PZ+MvDBkPuQ5/e6nzf+qRk5Xfz46FPbqNcj0jZW1zxhMCR3Cc48zJNYIlX9l6YFiCExhH01iCvwlsGKJw4iNHA==
   dependencies:
-    vscode-languageserver-protocol "^3.14.1"
+    vscode-languageserver-protocol "^3.15.3"
 
 mime-db@1.40.0:
   version "1.40.0"
@@ -1271,23 +1271,10 @@ verror@1.10.0:
     core-util-is "1.0.2"
     extsprintf "^1.2.0"
 
-vscode-jsonrpc@^4.0.0:
-  version "4.0.0"
-  resolved "https://registry.yarnpkg.com/vscode-jsonrpc/-/vscode-jsonrpc-4.0.0.tgz#a7bf74ef3254d0a0c272fab15c82128e378b3be9"
-  integrity sha512-perEnXQdQOJMTDFNv+UF3h1Y0z4iSiaN9jIlb0OqIYgosPCZGYh/MCUlkFtV2668PL69lRDO32hmvL2yiidUYg==
-
 vscode-jsonrpc@^5.0.1:
   version "5.0.1"
   resolved "https://registry.yarnpkg.com/vscode-jsonrpc/-/vscode-jsonrpc-5.0.1.tgz#9bab9c330d89f43fc8c1e8702b5c36e058a01794"
   integrity sha512-JvONPptw3GAQGXlVV2utDcHx0BiY34FupW/kI6mZ5x06ER5DdPG/tXWMVHjTNULF5uKPOUUD0SaXg5QaubJL0A==
-
-vscode-languageserver-protocol@^3.14.1:
-  version "3.14.1"
-  resolved "https://registry.yarnpkg.com/vscode-languageserver-protocol/-/vscode-languageserver-protocol-3.14.1.tgz#b8aab6afae2849c84a8983d39a1cf742417afe2f"
-  integrity sha512-IL66BLb2g20uIKog5Y2dQ0IiigW0XKrvmWiOvc0yXw80z3tMEzEnHjaGAb3ENuU7MnQqgnYJ1Cl2l9RvNgDi4g==
-  dependencies:
-    vscode-jsonrpc "^4.0.0"
-    vscode-languageserver-types "3.14.0"
 
 vscode-languageserver-protocol@^3.15.3:
   version "3.15.3"
@@ -1296,11 +1283,6 @@ vscode-languageserver-protocol@^3.15.3:
   dependencies:
     vscode-jsonrpc "^5.0.1"
     vscode-languageserver-types "3.15.1"
-
-vscode-languageserver-types@3.14.0:
-  version "3.14.0"
-  resolved "https://registry.yarnpkg.com/vscode-languageserver-types/-/vscode-languageserver-types-3.14.0.tgz#d3b5952246d30e5241592b6dde8280e03942e743"
-  integrity sha512-lTmS6AlAlMHOvPQemVwo3CezxBp0sNB95KNPkqp3Nxd5VFEnuG1ByM0zlRWos0zjO3ZWtkvhal0COgiV1xIA4A==
 
 vscode-languageserver-types@3.15.1:
   version "3.15.1"

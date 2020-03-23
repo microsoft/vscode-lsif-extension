@@ -164,8 +164,10 @@ export class JsonDatabase extends Database {
 		switch(vertex.label) {
 			case VertexLabels.metaData:
 				this.version = vertex.version;
-				if (vertex.projectRoot !== undefined) {
-					this.projectRoot = URI.parse(vertex.projectRoot);
+				break;
+			case VertexLabels.group:
+				if (vertex.rootUri !== undefined) {
+					this.projectRoot = URI.parse(vertex.rootUri);
 				}
 				break;
 			case VertexLabels.project:
@@ -279,21 +281,21 @@ export class JsonDatabase extends Database {
 	public getDocumentInfos(): DocumentInfo[] {
 		let result: DocumentInfo[] = [];
 		this.vertices.documents.forEach((document, key) => {
-			result.push({ uri: document.uri, id: key });
+			result.push({ uri: document.uri, id: key, hash: undefined });
 		});
 		return result;
 	}
 
-	protected findFile(uri: string): Id | undefined {
+	protected findFile(uri: string): { id: Id; hash: string | undefined; } | undefined {
 		let result = this.indices.documents.get(uri);
 		if (result === undefined) {
 			return undefined;
 		}
-		return result.id;
+		return { id: result.id, hash: undefined };
 	}
 
-	protected fileContent(id: Id): string | undefined {
-		let document = this.vertices.documents.get(id);
+	protected fileContent(info: {id: Id, hash: string | undefined }): string | undefined {
+		let document = this.vertices.documents.get(info.id);
 		if (document === undefined) {
 			return undefined;
 		}
