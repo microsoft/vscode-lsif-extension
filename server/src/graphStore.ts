@@ -9,7 +9,7 @@ import * as lsp from 'vscode-languageserver';
 import { Database, UriTransformer } from './database';
 import {
 	Id, EdgeLabels, DefinitionResult, FoldingRangeResult, DocumentSymbolResult, RangeBasedDocumentSymbol, Range, HoverResult,
-	ReferenceResult, ItemEdgeProperties, DeclarationResult, Moniker, Group
+	ReferenceResult, ItemEdgeProperties, DeclarationResult, Moniker, Group, MonikerKind
 } from 'lsif-protocol';
 import { MetaData, CompressorDescription, CompressionKind } from './protocol.compress';
 import { DocumentInfo } from './files';
@@ -379,6 +379,7 @@ export class GraphStore extends Database {
 	private findResultForDocumentStmt!: Sqlite.Statement;
 	private findRangeFromReferenceResult!: Sqlite.Statement;
 	private findResultFromReferenceResult!: Sqlite.Statement;
+	private findCascadesFromReferenceResult!: Sqlite.Statement;
 	private findRangeFromResult!: Sqlite.Statement;
 
 	private projectRoot!: URI;
@@ -467,6 +468,11 @@ export class GraphStore extends Database {
 			'Select v.id, v.label, v.value from vertices v',
 			'Inner Join items i On i.inV = v.id',
 			'Where i.outV = $id and i.property = 4'
+		].join(' '));
+		this.findCascadesFromReferenceResult = this.db.prepare([
+			'Select v.id, v.label, v.value from vertices v',
+			'Inner Join items i On i.inV = v.id',
+			'Where i.outV = $id and i.property = 5'
 		].join(' '));
 		this.initialize(transformerFactory);
 		return Promise.resolve();
@@ -743,22 +749,21 @@ export class GraphStore extends Database {
 		}
 
 		const result: lsp.Location[] = [];
+		const monikers: Map<Id, Moniker> = new Map();
 		const dedupRanges = new Set<Id>();
-		const dedupMonikers = new Set<Id>();
 
-		const findReferences = (result: lsp.Location[], dedupRanges: Set<Id>, dedupMonikers: Set<Id>, range: RangeResult): void => {
+		const findReferences = (result: lsp.Location[], dedupRanges: Set<Id>, monikers: Map<Id, Moniker>, range: RangeResult): void => {
 			const [referenceResult, anchorId] = this.getResultForId(range.id, EdgeLabels.textDocument_references);
 			if (referenceResult === undefined) {
 				return undefined;
 			}
 
-			this.resolveReferenceResult(result, dedupRanges, referenceResult, context);
-			const monikers = this.findMonikersForVertex(anchorId);
-			for (const moniker of monikers) {
-				if (dedupMonikers.has(moniker.id)) {
+			this.resolveReferenceResult(result, dedupRanges, monikers, referenceResult, context);
+			this.findMonikersForVertex(monikers, anchorId);
+			for (const moniker of monikers.values()) {
+				if (moniker.kind === MonikerKind.local) {
 					continue;
 				}
-				dedupMonikers.add(moniker.id);
 				const matchingMonikers = this.findMatchingMonikers(moniker);
 				for (const matchingMoniker of matchingMonikers) {
 					const vertexId = this.findVertexIdForMoniker(matchingMoniker);
@@ -769,38 +774,48 @@ export class GraphStore extends Database {
 					if (referenceResult === undefined) {
 						continue;
 					}
-					this.resolveReferenceResult(result, dedupRanges, referenceResult, context);
+					this.resolveReferenceResult(result, dedupRanges, monikers, referenceResult, context);
 				}
 			}
 		};
 
 		for (const range of ranges) {
-			findReferences(result, dedupRanges, dedupMonikers, range);
+			findReferences(result, dedupRanges, monikers, range);
 		}
 
 		return result;
 	}
 
-	private resolveReferenceResult(result: lsp.Location[], dedup: Set<Id>, referenceResult: ReferenceResult, context: lsp.ReferenceContext): void {
-		let qr: LocationResultWithProperty[] = this.findRangeFromReferenceResult.all({ id: referenceResult.id });
+	private resolveReferenceResult(result: lsp.Location[], dedupRanges: Set<Id>, monikers: Map<Id, Moniker>, referenceResult: ReferenceResult, context: lsp.ReferenceContext): void {
+		const qr: LocationResultWithProperty[] = this.findRangeFromReferenceResult.all({ id: referenceResult.id });
 		if (qr && qr.length > 0) {
-			let refLabel = this.getItemEdgeProperty(ItemEdgeProperties.references);
-			for (let item of qr) {
-				if (item.property === refLabel || context.includeDeclaration && !dedup.has(item.id)) {
-					dedup.add(item.id);
+			const refLabel = this.getItemEdgeProperty(ItemEdgeProperties.references);
+			for (const item of qr) {
+				if (item.property === refLabel || context.includeDeclaration && !dedupRanges.has(item.id)) {
+					dedupRanges.add(item.id);
 					result.push(this.createLocation(item));
 				}
 			}
 		}
-		let rqr: VertexResult[] = this.findResultFromReferenceResult.all({ id: referenceResult.id });
+
+		const mr: VertexResult[] = this.findCascadesFromReferenceResult.all({ id: referenceResult.id });
+		if (mr) {
+			for (const moniker of mr) {
+				if (!monikers.has(moniker.id)) {
+					monikers.set(moniker.id, this.decompress(JSON.parse(moniker.value)));
+				}
+			}
+		}
+
+		const rqr: VertexResult[] = this.findResultFromReferenceResult.all({ id: referenceResult.id });
 		if (rqr && rqr.length > 0) {
-			for (let item of rqr) {
-				this.resolveReferenceResult(result, dedup, this.decompress(JSON.parse(item.value)), context);
+			for (const item of rqr) {
+				this.resolveReferenceResult(result, dedupRanges, monikers, this.decompress(JSON.parse(item.value)), context);
 			}
 		}
 	}
 
-	private findMonikersForVertex(id: Id): Moniker[] {
+	private findMonikersForVertex(monikers: Map<Id, Moniker>, id: Id): void {
 		let currentId: Id = id;
 		let moniker: VertexResult | undefined;
 		do {
@@ -816,11 +831,13 @@ export class GraphStore extends Database {
 			currentId = previous.outV;
 		} while (currentId !== undefined);
 		if (moniker === undefined) {
-			return [];
+			return;
 		}
 		const result: Moniker[] = [this.decompress(JSON.parse(moniker.value))];
 		// Search for attached monikers.
-		return result;
+		for (const moniker of result) {
+			monikers.set(moniker.id, moniker);
+		}
 	}
 
 	private findMatchingMonikers(moniker: Moniker): Moniker[] {
