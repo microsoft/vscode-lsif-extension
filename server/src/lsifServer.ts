@@ -109,6 +109,8 @@ async function createDatabase(folder: WorkspaceFolder): Promise<Database | undef
 					format = db.prepare('Select * from format f').get().format;
 				} catch (err) {
 					// Old DBs have no format. Treat is as graph
+				} finally {
+					db.close();
 				}
 				if (format === 'blob') {
 					const module = await import('./blobStore');
