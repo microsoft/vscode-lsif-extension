@@ -120,8 +120,8 @@ async function createDatabase(folder: WorkspaceFolder): Promise<Database | undef
 					database = new module.GraphStore();
 				}
 			} else if (extName === '.lsif') {
-				const module = await import('./json');
-				database = new module.JsonDatabase();
+				const module = await import('./jsonStore');
+				database = new module.JsonStore();
 			}
 			if (database !== undefined) {
 				let promise = database.load(fsPath, (projectRoot: string) => {

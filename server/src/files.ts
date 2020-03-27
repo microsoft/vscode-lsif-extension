@@ -34,18 +34,18 @@ export namespace FileStat {
 export interface DocumentInfo {
 	id: Id;
 	uri: string;
-	hash: string | undefined;
+	hash: string;
 }
 
 interface File extends FileStat {
 	type: 1;
 	name: string;
 	id: Id;
-	hash: string | undefined;
+	hash: string;
 }
 
 namespace File {
-	export function create(name: string, id: Id, hash: string | undefined): File {
+	export function create(name: string, id: Id, hash: string): File {
 		return { type: FileType.File, ctime: ctime, mtime: mtime, size: 0, name, id, hash };
 	}
 }

@@ -3,6 +3,7 @@
  * Licensed under the MIT License. See License.txt in the project root for license information.
  * ------------------------------------------------------------------------------------------ */
 import * as fs from 'fs';
+import * as crypto from 'crypto';
 import * as readline from 'readline';
 
 import { URI } from 'vscode-uri';
@@ -12,11 +13,16 @@ import * as lsp from 'vscode-languageserver';
 import {
 	Id, Vertex, Project, Document, Range, DiagnosticResult, DocumentSymbolResult, FoldingRangeResult, DocumentLinkResult, DefinitionResult,
 	TypeDefinitionResult, HoverResult, ReferenceResult, ImplementationResult, Edge, RangeBasedDocumentSymbol, DeclarationResult, ResultSet,
-	ElementTypes, VertexLabels, EdgeLabels, ItemEdgeProperties
+	ElementTypes, VertexLabels, EdgeLabels, ItemEdgeProperties, EventScope, EventKind, GroupEvent, ProjectEvent, Moniker as PMoniker, moniker, MonikerKind
 } from 'lsif-protocol';
 
 import { DocumentInfo } from './files';
 import { Database, UriTransformer } from './database';
+import { eventNames } from 'cluster';
+
+interface Moniker extends PMoniker {
+	key: string;
+}
 
 interface Vertices {
 	all: Map<Id, Vertex>;
@@ -30,12 +36,14 @@ type ItemTarget =
 	{ type: ItemEdgeProperties.declarations; range: Range; } |
 	{ type: ItemEdgeProperties.definitions; range: Range; } |
 	{ type: ItemEdgeProperties.references; range: Range; } |
-	{ type: ItemEdgeProperties.referenceResults; result: ReferenceResult; };
+	{ type: ItemEdgeProperties.referenceResults; result: ReferenceResult; } |
+	{ type: ItemEdgeProperties.referenceLinks; result: Moniker; };
 
 interface Out {
 	contains: Map<Id, Document[] | Range[]>;
 	item: Map<Id, ItemTarget[]>;
-	next: Map<Id, ResultSet>;
+	next: Map<Id, Vertex>;
+	moniker: Map<Id, Moniker>;
 	documentSymbol: Map<Id, DocumentSymbolResult>;
 	foldingRange: Map<Id, FoldingRangeResult>;
 	documentLink: Map<Id, DocumentLinkResult>;
@@ -50,16 +58,22 @@ interface Out {
 
 interface In {
 	contains: Map<Id, Project | Document>;
+	previous: Map<Id, Vertex>;
+	moniker: Map<Id, Vertex>;
 }
 
 interface Indices {
-	documents: Map<string, Document>;
+	monikers: Map<string, Moniker[]>;
+	contents: Map<string, string>;
+	documents: Map<string, { hash: string, documents: Document[] }>;
 }
 
-export class JsonDatabase extends Database {
+export class JsonStore extends Database {
 
 	private version: string | undefined;
 	private projectRoot!: URI;
+	private activeGroup: Id | undefined;
+	private activeProject: Id | undefined;
 
 	private vertices: Vertices;
 	private indices: Indices;
@@ -76,13 +90,16 @@ export class JsonDatabase extends Database {
 		};
 
 		this.indices = {
-			documents: new Map()
+			contents: new Map(),
+			documents: new Map(),
+			monikers: new Map(),
 		};
 
 		this.out = {
 			contains: new Map(),
 			item: new Map(),
 			next: new Map(),
+			moniker: new Map(),
 			documentSymbol: new Map(),
 			foldingRange: new Map(),
 			documentLink: new Map(),
@@ -96,13 +113,15 @@ export class JsonDatabase extends Database {
 		};
 
 		this.in = {
-			contains: new Map()
+			contains: new Map(),
+			previous: new Map(),
+			moniker: new Map()
 		};
 	}
 
 	public load(file: string, transformerFactory: (projectRoot: string) => UriTransformer): Promise<void> {
 		return new Promise<void>((resolve, reject) => {
-			let input: fs.ReadStream = fs.createReadStream(file, { encoding: 'utf8'});
+			const input: fs.ReadStream = fs.createReadStream(file, { encoding: 'utf8'});
 			input.on('error', reject);
 			const rd = readline.createInterface(input);
 			rd.on('line', (line: string) => {
@@ -110,7 +129,7 @@ export class JsonDatabase extends Database {
 					return;
 				}
 				try {
-					let element: Edge | Vertex = JSON.parse(line);
+					const element: Edge | Vertex = JSON.parse(line);
 					switch (element.type) {
 						case ElementTypes.vertex:
 							this.processVertex(element);
@@ -133,15 +152,15 @@ export class JsonDatabase extends Database {
 					reject(new Error('No version found.'));
 					return;
 				} else {
-					let semVer = SemVer.parse(this.version);
+					const semVer = SemVer.parse(this.version);
 					if (!semVer) {
 						reject(new Error(`No valid semantic version string. The version is: ${this.version}`));
 						return;
 					}
-					let range: SemVer.Range = new SemVer.Range('>=0.4.0 <0.5.0');
+					const range: SemVer.Range = new SemVer.Range('>0.4.99 <=0.5.0-next.2');
 					range.includePrerelease = true;
 					if (!SemVer.satisfies(semVer, range)) {
-						reject(new Error(`Requires version 0.4.1 but received: ${this.version}`));
+						reject(new Error(`Requires version 0.5.0 or higher but received: ${this.version}`));
 						return;
 					}
 				}
@@ -173,14 +192,54 @@ export class JsonDatabase extends Database {
 			case VertexLabels.project:
 				this.vertices.projects.set(vertex.id, vertex);
 				break;
+			case VertexLabels.event:
+				if (vertex.kind === EventKind.begin) {
+					switch (vertex.scope) {
+						case EventScope.group:
+							this.activeGroup = (vertex as GroupEvent).data;
+							break;
+						case EventScope.project:
+							this.activeProject = (vertex as ProjectEvent).data;
+							break;
+					}
+				}
+				break;
 			case VertexLabels.document:
-				this.vertices.documents.set(vertex.id, vertex);
-				this.indices.documents.set(vertex.uri, vertex);
+				this.doProcessDocument(vertex);
+				break;
+			case VertexLabels.moniker:
+				if (vertex.kind !== MonikerKind.local) {
+					const key = crypto.createHash('md5').update(JSON.stringify({ s: vertex.scheme, i: vertex.identifier }, undefined, 0)).digest('base64');
+					(vertex as Moniker).key = key;
+					let values = this.indices.monikers.get(key);
+					if (values === undefined) {
+						values = [];
+						this.indices.monikers.set(key, values);
+					}
+					values.push(vertex as Moniker);
+				}
 				break;
 			case VertexLabels.range:
 				this.vertices.ranges.set(vertex.id, vertex);
 				break;
 		}
+	}
+
+	private doProcessDocument(document: Document): void {
+		const contents = document.contents !== undefined ? document.contents : 'No content provided.';
+		this.vertices.documents.set(document.id, document);
+		const hash = crypto.createHash('md5').update(contents).digest('base64');
+		this.indices.contents.set(hash, contents);
+
+		let value = this.indices.documents.get(document.uri);
+		if (value === undefined) {
+			value = { hash, documents: [] };
+			this.indices.documents.set(document.uri, value);
+		}
+		if (hash !== value.hash) {
+			console.error(`Document ${document.uri} has different content.`);
+		}
+		value.documents.push(document);
 	}
 
 	private processEdge(edge: Edge): void {
@@ -198,8 +257,8 @@ export class JsonDatabase extends Database {
 	}
 
 	private doProcessEdge(label: EdgeLabels, outV: Id, inV: Id, property?: ItemEdgeProperties): void {
-		let from: Vertex | undefined = this.vertices.all.get(outV);
-		let to: Vertex | undefined = this.vertices.all.get(inV);
+		const from: Vertex | undefined = this.vertices.all.get(outV);
+		const to: Vertex | undefined = this.vertices.all.get(inV);
 		if (from === undefined) {
 			throw new Error(`No vertex found for Id ${outV}`);
 		}
@@ -235,6 +294,8 @@ export class JsonDatabase extends Database {
 						case ItemEdgeProperties.referenceResults:
 							itemTarget = { type: property, result: to as ReferenceResult };
 							break;
+						case ItemEdgeProperties.referenceLinks:
+							itemTarget = { type: property, result: to as Moniker };
 					}
 				} else {
 					itemTarget = to as Range;
@@ -249,7 +310,12 @@ export class JsonDatabase extends Database {
 				}
 				break;
 			case EdgeLabels.next:
-				this.out.next.set(from.id, to as ResultSet);
+				this.out.next.set(from.id, to);
+				this.in.previous.set(to.id, from);
+				break;
+			case EdgeLabels.moniker:
+				this.out.moniker.set(from.id, to as Moniker);
+				this.in.moniker.set(to.id, from);
 				break;
 			case EdgeLabels.textDocument_documentSymbol:
 				this.out.documentSymbol.set(from.id, to as DocumentSymbolResult);
@@ -279,35 +345,35 @@ export class JsonDatabase extends Database {
 	}
 
 	public getDocumentInfos(): DocumentInfo[] {
-		let result: DocumentInfo[] = [];
-		this.vertices.documents.forEach((document, key) => {
-			result.push({ uri: document.uri, id: key, hash: undefined });
+		const result: DocumentInfo[] = [];
+		this.indices.documents.forEach((value, key) => {
+			// We take the id of the first document.
+			result.push({ uri: key, id: value.documents[0].id, hash: value.hash });
 		});
 		return result;
 	}
 
-	protected findFile(uri: string): { id: Id; hash: string | undefined; } | undefined {
-		let result = this.indices.documents.get(uri);
+	protected findFile(uri: string): { id: Id; hash: string; } | undefined {
+		const result = this.indices.documents.get(uri);
 		if (result === undefined) {
 			return undefined;
 		}
-		return { id: result.id, hash: undefined };
+		return { id: result.documents[0].id, hash: result.hash };
 	}
 
-	protected fileContent(info: {id: Id, hash: string | undefined }): string | undefined {
-		let document = this.vertices.documents.get(info.id);
-		if (document === undefined) {
-			return undefined;
-		}
-		return document.contents;
+	protected fileContent(info: { id: Id, hash: string }): string | undefined {
+		return this.indices.contents.get(info.hash);
 	}
 
 	public foldingRanges(uri: string): lsp.FoldingRange[] | undefined {
-		let document = this.indices.documents.get(this.toDatabase(uri));
-		if (document === undefined) {
+		const value = this.indices.documents.get(this.toDatabase(uri));
+		if (value === undefined) {
 			return undefined;
 		}
-		let foldingRangeResult = this.out.foldingRange.get(document.id);
+		// Take the id of the first document with that content. We assume that
+		// all documents with the same content have the same folding ranges.
+		const id = value.documents[0].id;
+		const foldingRangeResult = this.out.foldingRange.get(id);
 		if (foldingRangeResult === undefined) {
 			return undefined;
 		}
@@ -319,11 +385,14 @@ export class JsonDatabase extends Database {
 	}
 
 	public documentSymbols(uri: string): lsp.DocumentSymbol[] | undefined {
-		let document = this.indices.documents.get(this.toDatabase(uri));
-		if (document === undefined) {
+		const value = this.indices.documents.get(this.toDatabase(uri));
+		if (value === undefined) {
 			return undefined;
 		}
-		let documentSymbolResult = this.out.documentSymbol.get(document.id);
+		// Take the id of the first document with that content. We assume that
+		// all documents with the same content have the same document symbols.
+		const id = value.documents[0].id;
+		let documentSymbolResult = this.out.documentSymbol.get(id);
 		if (documentSymbolResult === undefined || documentSymbolResult.result.length === 0) {
 			return undefined;
 		}
@@ -367,12 +436,12 @@ export class JsonDatabase extends Database {
 	}
 
 	public hover(uri: string, position: lsp.Position): lsp.Hover | undefined {
-		let range = this.findRangeFromPosition(this.toDatabase(uri), position);
+		const range = this.findRangeFromPosition(this.toDatabase(uri), position);
 		if (range === undefined) {
 			return undefined;
 		}
 
-		let hoverResult: HoverResult | undefined = this.getResult(range, this.out.hover);
+		const [hoverResult]= this.getResultForId(range.id, this.out.hover);
 		if (hoverResult === undefined) {
 			return undefined;
 		}
@@ -385,40 +454,40 @@ export class JsonDatabase extends Database {
 	}
 
 	public declarations(uri: string, position: lsp.Position): lsp.Location | lsp.Location[] | undefined {
-		let range = this.findRangeFromPosition(this.toDatabase(uri), position);
+		const range = this.findRangeFromPosition(this.toDatabase(uri), position);
 		if (range === undefined) {
 			return undefined;
 		}
-		let declarationResult: DeclarationResult | undefined = this.getResult(range, this.out.declaration);
+		const [declarationResult] = this.getResultForId(range.id, this.out.declaration);
 		if (declarationResult === undefined) {
 			return undefined;
 		}
-		let ranges = this.item(declarationResult);
+		const ranges = this.item(declarationResult);
 		if (ranges === undefined) {
 			return undefined;
 		}
-		let result: lsp.Location[] = [];
-		for (let element of ranges) {
+		const result: lsp.Location[] = [];
+		for (const element of ranges) {
 			result.push(this.asLocation(element));
 		}
 		return result;
 	}
 
 	public definitions(uri: string, position: lsp.Position): lsp.Location | lsp.Location[] | undefined {
-		let range = this.findRangeFromPosition(this.toDatabase(uri), position);
+		const range = this.findRangeFromPosition(this.toDatabase(uri), position);
 		if (range === undefined) {
 			return undefined;
 		}
-		let definitionResult: DefinitionResult | undefined = this.getResult(range, this.out.definition);
+		const [definitionResult] = this.getResultForId(range.id, this.out.definition);
 		if (definitionResult === undefined) {
 			return undefined;
 		}
-		let ranges = this.item(definitionResult);
+		const ranges = this.item(definitionResult);
 		if (ranges === undefined) {
 			return undefined;
 		}
-		let result: lsp.Location[] = [];
-		for (let element of ranges) {
+		const result: lsp.Location[] = [];
+		for (const element of ranges) {
 			result.push(this.asLocation(element));
 		}
 		return result;
@@ -430,29 +499,98 @@ export class JsonDatabase extends Database {
 			return undefined;
 		}
 
-		let referenceResult: ReferenceResult | undefined = this.getResult(range, this.out.references);
-		if (referenceResult === undefined) {
-			return undefined;
-		}
+		const findReferences = (result: lsp.Location[], dedupRanges: Set<Id>, dedupMonikers: Set<string>, range: Range): void => {
+			const [referenceResult, anchorId] = this.getResultForId(range.id, this.out.references);
+			if (referenceResult === undefined) {
+				return;
+			}
+			const monikers: Moniker[] = [];
+			this.resolveReferenceResult(result, dedupRanges, monikers, referenceResult, context);
+			this.findMonikers(monikers, anchorId);
+			for (const moniker of monikers) {
+				if (dedupMonikers.has(moniker.key)) {
+					continue;
+				}
+				dedupMonikers.add(moniker.key);
+				const matchingMonikers = this.indices.monikers.get(moniker.key);
+				if (matchingMonikers !== undefined) {
+					for (const matchingMoniker of matchingMonikers) {
+						if (moniker.id === matchingMoniker.id) {
+							continue;
+						}
+						const vertex = this.findVertexForMoniker(matchingMoniker);
+						if (vertex !== undefined) {
+							const [referenceResult] = this.getResultForId(vertex.id, this.out.references);
+							if (referenceResult === undefined) {
+								continue;
+							}
+							this.resolveReferenceResult(result, dedupRanges, monikers, referenceResult, context);
+						}
+					}
+				}
+			}
+		};
+		const result: lsp.Location[] = [];
+		const dedupRanges: Set<Id> = new Set();
+		const dedupMonikers: Set<string> = new Set();
 
-		let targets = this.item(referenceResult);
+		findReferences(result, dedupRanges, dedupMonikers, range);
+		return result;
+	}
+
+	private getResultForId<T>(id: Id, edges: Map<Id, T>): [T | undefined, Id] {
+		let currentId = id;
+		do {
+			const result: T | undefined = edges.get(currentId);
+			if (result !== undefined) {
+				return [result, currentId];
+			}
+			const next = this.out.next.get(id);
+			if (next === undefined) {
+				return [undefined, id];
+			}
+			currentId = next.id;
+		} while (true);
+	}
+
+	private resolveReferenceResult(locations: lsp.Location[], dedupRanges: Set<Id>, monikers: Moniker[], referenceResult: ReferenceResult, context: lsp.ReferenceContext): void {
+		const targets = this.item(referenceResult);
 		if (targets === undefined) {
 			return undefined;
 		}
-		return this.asReferenceResult(targets, context, new Set());
+		for (let target of targets) {
+			if (target.type === ItemEdgeProperties.declarations && context.includeDeclaration) {
+				this.addLocation(locations, target.range, dedupRanges);
+			} else if (target.type === ItemEdgeProperties.definitions && context.includeDeclaration) {
+				this.addLocation(locations, target.range, dedupRanges);
+			} else if (target.type === ItemEdgeProperties.references) {
+				this.addLocation(locations, target.range, dedupRanges);
+			} else if (target.type === ItemEdgeProperties.referenceResults) {
+				this.resolveReferenceResult(locations, dedupRanges, monikers, target.result, context);
+			} else if (target.type === ItemEdgeProperties.referenceLinks) {
+				monikers.push(target.result);
+			}
+		}
 	}
 
-	private getResult<T>(range: Range, edges: Map<Id, T>): T | undefined {
-		let id: Id | undefined = range.id;
+	private findMonikers(result: Moniker[], id: Id): void {
+		let currentId = id;
 		do {
-			let result: T | undefined = edges.get(id);
-			if (result !== undefined) {
-				return result;
+			const moniker = this.out.moniker.get(currentId);
+			if (moniker !== undefined) {
+				result.push(moniker);
+				return;
 			}
-			let next = this.out.next.get(id);
-			id = next !== undefined ? next.id : undefined;
-		} while (id !== undefined);
-		return undefined;
+			const previous = this.in.previous.get(id);
+			if (previous === undefined) {
+				return;
+			}
+			currentId = previous.id;
+		} while (true);
+	}
+
+	private findVertexForMoniker(moniker: Moniker): Vertex | undefined {
+		return this.in.moniker.get(moniker.id);
 	}
 
 	private item(value: DeclarationResult): Range[];
@@ -500,11 +638,12 @@ export class JsonDatabase extends Database {
 	}
 
 	private findRangeFromPosition(file: string, position: lsp.Position): Range | undefined {
-		let document = this.indices.documents.get(file);
-		if (document === undefined) {
+		const value = this.indices.documents.get(file);
+		if (value === undefined) {
 			return undefined;
 		}
-		let contains = this.out.contains.get(document.id);
+		const id = value.documents[0].id;
+		let contains = this.out.contains.get(id);
 		if (contains === undefined || contains.length === 0) {
 			return undefined;
 		}
@@ -514,11 +653,11 @@ export class JsonDatabase extends Database {
 			if (item.label !== VertexLabels.range) {
 				continue;
 			}
-			if (JsonDatabase.containsPosition(item, position)) {
+			if (JsonStore.containsPosition(item, position)) {
 				if (!candidate) {
 					candidate = item;
 				} else {
-					if (JsonDatabase.containsRange(candidate, item)) {
+					if (JsonStore.containsRange(candidate, item)) {
 						candidate = item;
 					}
 				}
