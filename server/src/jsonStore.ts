@@ -484,27 +484,21 @@ export class JsonStore extends Database {
 			return undefined;
 		}
 
+		const resolveTargets = (result: lsp.Location[], dedupLocations: Set<string>, targetResult: T): void => {
+			const ranges = this.item(targetResult);
+			if (ranges === undefined) {
+				return undefined;
+			}
+			for (const element of ranges) {
+				this.addLocation(result, element, dedupLocations);
+			}
+		};
+
 		const _findTargets = (result: lsp.Location[], dedupLocations: Set<string>, dedupMonikers: Set<string>, range: Range): void => {
 			const resultPath = this.getResultPath(range.id, edges);
 			if (resultPath.result === undefined) {
 				return undefined;
 			}
-
-			const resolveTargets = (result: lsp.Location[], dedupLocations: Set<string>, targetResult: T): void => {
-				const ranges = this.item(targetResult);
-				if (ranges === undefined) {
-					return undefined;
-				}
-				for (const element of ranges) {
-					const location = this.asLocation(element);
-					const key = Locations.makeKey(location);
-					if (dedupLocations.has(key)) {
-						continue;
-					}
-					dedupLocations.add(key);
-					result.push(location);
-				}
-			};
 
 			const mostSpecificMoniker = this.getMostSpecificMoniker(resultPath);
 			const monikers: Moniker[] = mostSpecificMoniker !== undefined ? [mostSpecificMoniker] : [];
@@ -659,22 +653,6 @@ export class JsonStore extends Database {
 		} else {
 			return undefined;
 		}
-	}
-
-	private asReferenceResult(targets: ItemTarget[], context: lsp.ReferenceContext, dedup: Set<string>): lsp.Location[] {
-		let result: lsp.Location[] = [];
-		for (let target of targets) {
-			if (target.type === ItemEdgeProperties.declarations && context.includeDeclaration) {
-				this.addLocation(result, target.range, dedup);
-			} else if (target.type === ItemEdgeProperties.definitions && context.includeDeclaration) {
-				this.addLocation(result, target.range, dedup);
-			} else if (target.type === ItemEdgeProperties.references) {
-				this.addLocation(result, target.range, dedup);
-			} else if (target.type === ItemEdgeProperties.referenceResults) {
-				result.push(...this.asReferenceResult(this.item(target.result), context, dedup));
-			}
-		}
-		return result;
 	}
 
 	private addLocation(result: lsp.Location[], value: Range | lsp.Location, dedup: Set<string>): void {
