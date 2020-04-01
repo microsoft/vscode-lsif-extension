@@ -58,14 +58,25 @@ interface Out {
 
 interface In {
 	contains: Map<Id, Project | Document>;
-	previous: Map<Id, Vertex>;
-	moniker: Map<Id, Vertex>;
+	moniker: Map<Id, Vertex[]>;
 }
 
 interface Indices {
 	monikers: Map<string, Moniker[]>;
 	contents: Map<string, string>;
 	documents: Map<string, { hash: string, documents: Document[] }>;
+}
+
+interface ResultPath<T> {
+	path: { vertex: Id, moniker: Moniker | undefined }[];
+	result: { value: T, moniker: Moniker | undefined } | undefined;
+}
+
+namespace Locations {
+	export function makeKey(location: lsp.Location): string {
+		const range = location.range;
+		return crypto.createHash('md5').update(JSON.stringify({ d: location.uri, sl: range.start.line, sc: range.start.character, el: range.end.line, ec: range.end.character }, undefined, 0)).digest('base64');
+	}
 }
 
 export class JsonStore extends Database {
@@ -114,7 +125,6 @@ export class JsonStore extends Database {
 
 		this.in = {
 			contains: new Map(),
-			previous: new Map(),
 			moniker: new Map()
 		};
 	}
@@ -311,11 +321,15 @@ export class JsonStore extends Database {
 				break;
 			case EdgeLabels.next:
 				this.out.next.set(from.id, to);
-				this.in.previous.set(to.id, from);
 				break;
 			case EdgeLabels.moniker:
 				this.out.moniker.set(from.id, to as Moniker);
-				this.in.moniker.set(to.id, from);
+				values = this.in.moniker.get(to.id);
+				if (values === undefined) {
+					values = [];
+					this.in.moniker.set(to.id, values);
+				}
+				values.push(from);
 				break;
 			case EdgeLabels.textDocument_documentSymbol:
 				this.out.documentSymbol.set(from.id, to as DocumentSymbolResult);
@@ -436,12 +450,15 @@ export class JsonStore extends Database {
 	}
 
 	public hover(uri: string, position: lsp.Position): lsp.Hover | undefined {
-		const range = this.findRangeFromPosition(this.toDatabase(uri), position);
-		if (range === undefined) {
+		const ranges = this.findRangesFromPosition(this.toDatabase(uri), position);
+		if (ranges === undefined) {
 			return undefined;
 		}
 
-		const [hoverResult]= this.getResultForId(range.id, this.out.hover);
+		// We assume that for the same document URI the same position results in the same
+		// hover. So we take the first range.
+		const range = ranges[0];
+		const hoverResult = this.getResultPath(range.id, this.out.hover).result?.value;
 		if (hoverResult === undefined) {
 			return undefined;
 		}
@@ -454,59 +471,91 @@ export class JsonStore extends Database {
 	}
 
 	public declarations(uri: string, position: lsp.Position): lsp.Location | lsp.Location[] | undefined {
-		const range = this.findRangeFromPosition(this.toDatabase(uri), position);
-		if (range === undefined) {
-			return undefined;
-		}
-		const [declarationResult] = this.getResultForId(range.id, this.out.declaration);
-		if (declarationResult === undefined) {
-			return undefined;
-		}
-		const ranges = this.item(declarationResult);
+		const ranges = this.findRangesFromPosition(this.toDatabase(uri), position);
 		if (ranges === undefined) {
 			return undefined;
 		}
+
+		const findDeclarations = (result: lsp.Location[], dedupLocations: Set<string>, range: Range) => {
+			const declarationResult = this.getResultPath(range.id, this.out.declaration).result?.value;
+			if (declarationResult === undefined) {
+				return undefined;
+			}
+			const ranges = this.item(declarationResult);
+			if (ranges === undefined) {
+				return undefined;
+			}
+			for (const element of ranges) {
+				const location = this.asLocation(element);
+				const key = Locations.makeKey(location);
+				if (dedupLocations.has(key)) {
+					continue;
+				}
+				dedupLocations.add(key);
+				result.push(location);
+			}
+			return result;
+		};
+
 		const result: lsp.Location[] = [];
-		for (const element of ranges) {
-			result.push(this.asLocation(element));
+		const dedupLocations: Set<string> = new Set();
+		for (const range of ranges) {
+			findDeclarations(result, dedupLocations, range);
 		}
 		return result;
+
 	}
 
 	public definitions(uri: string, position: lsp.Position): lsp.Location | lsp.Location[] | undefined {
-		const range = this.findRangeFromPosition(this.toDatabase(uri), position);
-		if (range === undefined) {
-			return undefined;
-		}
-		const [definitionResult] = this.getResultForId(range.id, this.out.definition);
-		if (definitionResult === undefined) {
-			return undefined;
-		}
-		const ranges = this.item(definitionResult);
+		const ranges = this.findRangesFromPosition(this.toDatabase(uri), position);
 		if (ranges === undefined) {
 			return undefined;
 		}
+
+		const findDefinitions = (result: lsp.Location[], dedupLocations: Set<string>, range: Range) => {
+			const definitionResult = this.getResultPath(range.id, this.out.definition).result?.value;
+			if (definitionResult === undefined) {
+				return undefined;
+			}
+			const ranges = this.item(definitionResult);
+			if (ranges === undefined) {
+				return undefined;
+			}
+			for (const element of ranges) {
+				const location = this.asLocation(element);
+				const key = Locations.makeKey(location);
+				if (dedupLocations.has(key)) {
+					continue;
+				}
+				dedupLocations.add(key);
+				result.push(location);
+			}
+			return result;
+		};
+
 		const result: lsp.Location[] = [];
-		for (const element of ranges) {
-			result.push(this.asLocation(element));
+		const dedupLocations: Set<string> = new Set();
+		for (const range of ranges) {
+			findDefinitions(result, dedupLocations, range);
 		}
 		return result;
+
 	}
 
 	public references(uri: string, position: lsp.Position, context: lsp.ReferenceContext): lsp.Location[] | undefined {
-		let range = this.findRangeFromPosition(this.toDatabase(uri), position);
-		if (range === undefined) {
+		let ranges = this.findRangesFromPosition(this.toDatabase(uri), position);
+		if (ranges === undefined) {
 			return undefined;
 		}
 
-		const findReferences = (result: lsp.Location[], dedupRanges: Set<Id>, dedupMonikers: Set<string>, range: Range): void => {
-			const [referenceResult, anchorId] = this.getResultForId(range.id, this.out.references);
-			if (referenceResult === undefined) {
+		const findReferences = (result: lsp.Location[], dedupLocations: Set<string>, dedupMonikers: Set<string>, range: Range): void => {
+			const resultPath = this.getResultPath(range.id, this.out.references);
+			if (resultPath.result === undefined) {
 				return;
 			}
-			const monikers: Moniker[] = [];
-			this.resolveReferenceResult(result, dedupRanges, monikers, referenceResult, context);
-			this.findMonikers(monikers, anchorId);
+			const mostSpecificMoniker = this.getMostSpecificMoniker(resultPath);
+			const monikers: Moniker[] = mostSpecificMoniker !== undefined ? [mostSpecificMoniker] : [];
+			this.resolveReferenceResult(result, dedupLocations, monikers, resultPath.result.value, context);
 			for (const moniker of monikers) {
 				if (dedupMonikers.has(moniker.key)) {
 					continue;
@@ -518,79 +567,84 @@ export class JsonStore extends Database {
 						if (moniker.id === matchingMoniker.id) {
 							continue;
 						}
-						const vertex = this.findVertexForMoniker(matchingMoniker);
-						if (vertex !== undefined) {
-							const [referenceResult] = this.getResultForId(vertex.id, this.out.references);
-							if (referenceResult === undefined) {
-								continue;
+						const vertices = this.findVerticesForMoniker(matchingMoniker);
+						if (vertices !== undefined) {
+							for (const vertex of vertices) {
+								const resultPath = this.getResultPath(vertex.id, this.out.references);
+								if (resultPath.result === undefined) {
+									continue;
+								}
+								this.resolveReferenceResult(result, dedupLocations, monikers, resultPath.result.value, context);
 							}
-							this.resolveReferenceResult(result, dedupRanges, monikers, referenceResult, context);
 						}
 					}
 				}
 			}
 		};
-		const result: lsp.Location[] = [];
-		const dedupRanges: Set<Id> = new Set();
-		const dedupMonikers: Set<string> = new Set();
 
-		findReferences(result, dedupRanges, dedupMonikers, range);
+		const result: lsp.Location[] = [];
+		const dedupLocations: Set<string> = new Set();
+		const dedupMonikers: Set<string> = new Set();
+		for (const range of ranges) {
+			findReferences(result, dedupLocations, dedupMonikers, range);
+		}
+
 		return result;
 	}
 
-	private getResultForId<T>(id: Id, edges: Map<Id, T>): [T | undefined, Id] {
-		let currentId = id;
+	private getResultPath<T>(start: Id, edges: Map<Id, T>): ResultPath<T> {
+		let currentId = start;
+		const result: ResultPath<T> = { path: [], result: undefined };
 		do {
-			const result: T | undefined = edges.get(currentId);
-			if (result !== undefined) {
-				return [result, currentId];
+			const value: T | undefined = edges.get(currentId);
+			const moniker: Moniker | undefined = this.out.moniker.get(currentId);
+			if (value !== undefined) {
+				result.result = { value, moniker };
+				return result;
 			}
-			const next = this.out.next.get(id);
+			result.path.push({ vertex: currentId, moniker });
+			const next = this.out.next.get(currentId);
 			if (next === undefined) {
-				return [undefined, id];
+				return result;
 			}
 			currentId = next.id;
 		} while (true);
 	}
 
-	private resolveReferenceResult(locations: lsp.Location[], dedupRanges: Set<Id>, monikers: Moniker[], referenceResult: ReferenceResult, context: lsp.ReferenceContext): void {
+	private getMostSpecificMoniker<T>(result: ResultPath<T>): Moniker | undefined {
+		if (result.result?.moniker !== undefined) {
+			return result.result.moniker;
+		}
+		for (let i = result.path.length - 1; i >= 0; i--) {
+			if (result.path[i].moniker !== undefined) {
+				return result.path[i].moniker;
+			}
+		}
+		return undefined;
+	}
+
+	private findVerticesForMoniker(moniker: Moniker): Vertex[] | undefined {
+		return this.in.moniker.get(moniker.id);
+	}
+
+	private resolveReferenceResult(locations: lsp.Location[], dedupLocations: Set<string>, monikers: Moniker[], referenceResult: ReferenceResult, context: lsp.ReferenceContext): void {
 		const targets = this.item(referenceResult);
 		if (targets === undefined) {
 			return undefined;
 		}
 		for (let target of targets) {
 			if (target.type === ItemEdgeProperties.declarations && context.includeDeclaration) {
-				this.addLocation(locations, target.range, dedupRanges);
+				this.addLocation(locations, target.range, dedupLocations);
 			} else if (target.type === ItemEdgeProperties.definitions && context.includeDeclaration) {
-				this.addLocation(locations, target.range, dedupRanges);
+				this.addLocation(locations, target.range, dedupLocations);
 			} else if (target.type === ItemEdgeProperties.references) {
-				this.addLocation(locations, target.range, dedupRanges);
+				this.addLocation(locations, target.range, dedupLocations);
 			} else if (target.type === ItemEdgeProperties.referenceResults) {
-				this.resolveReferenceResult(locations, dedupRanges, monikers, target.result, context);
+				this.resolveReferenceResult(locations, dedupLocations, monikers, target.result, context);
 			} else if (target.type === ItemEdgeProperties.referenceLinks) {
 				monikers.push(target.result);
 			}
 		}
-	}
-
-	private findMonikers(result: Moniker[], id: Id): void {
-		let currentId = id;
-		do {
-			const moniker = this.out.moniker.get(currentId);
-			if (moniker !== undefined) {
-				result.push(moniker);
-				return;
-			}
-			const previous = this.in.previous.get(id);
-			if (previous === undefined) {
-				return;
-			}
-			currentId = previous.id;
-		} while (true);
-	}
-
-	private findVertexForMoniker(moniker: Moniker): Vertex | undefined {
-		return this.in.moniker.get(moniker.id);
 	}
 
 	private item(value: DeclarationResult): Range[];
@@ -608,7 +662,7 @@ export class JsonStore extends Database {
 		}
 	}
 
-	private asReferenceResult(targets: ItemTarget[], context: lsp.ReferenceContext, dedup: Set<Id>): lsp.Location[] {
+	private asReferenceResult(targets: ItemTarget[], context: lsp.ReferenceContext, dedup: Set<string>): lsp.Location[] {
 		let result: lsp.Location[] = [];
 		for (let target of targets) {
 			if (target.type === ItemEdgeProperties.declarations && context.includeDeclaration) {
@@ -624,46 +678,54 @@ export class JsonStore extends Database {
 		return result;
 	}
 
-	private addLocation(result: lsp.Location[], value: Range | lsp.Location, dedup: Set<Id>): void {
+	private addLocation(result: lsp.Location[], value: Range | lsp.Location, dedup: Set<string>): void {
+		let location: lsp.Location;
 		if (lsp.Location.is(value)) {
-			result.push(value);
+			location = value;
 		} else {
-			if (dedup.has(value.id)) {
-				return;
-			}
 			let document = this.in.contains.get(value.id)!;
-			result.push(lsp.Location.create(this.fromDatabase((document as Document).uri), this.asRange(value)));
-			dedup.add(value.id);
+			location = lsp.Location.create(this.fromDatabase((document as Document).uri), this.asRange(value));
+		}
+		const key = Locations.makeKey(location);
+		if (!dedup.has(key)) {
+			dedup.add(key);
+			result.push(location);
 		}
 	}
 
-	private findRangeFromPosition(file: string, position: lsp.Position): Range | undefined {
+	private findRangesFromPosition(file: string, position: lsp.Position): Range[] | undefined {
 		const value = this.indices.documents.get(file);
 		if (value === undefined) {
 			return undefined;
 		}
-		const id = value.documents[0].id;
-		let contains = this.out.contains.get(id);
-		if (contains === undefined || contains.length === 0) {
-			return undefined;
-		}
-
-		let candidate: Range | undefined;
-		for (let item of contains) {
-			if (item.label !== VertexLabels.range) {
-				continue;
+		let result: Range[] = [];
+		for (const document of value.documents) {
+			const id = document.id;
+			let contains = this.out.contains.get(id);
+			if (contains === undefined || contains.length === 0) {
+				return undefined;
 			}
-			if (JsonStore.containsPosition(item, position)) {
-				if (!candidate) {
-					candidate = item;
-				} else {
-					if (JsonStore.containsRange(candidate, item)) {
+
+			let candidate: Range | undefined;
+			for (let item of contains) {
+				if (item.label !== VertexLabels.range) {
+					continue;
+				}
+				if (JsonStore.containsPosition(item, position)) {
+					if (!candidate) {
 						candidate = item;
+					} else {
+						if (JsonStore.containsRange(candidate, item)) {
+							candidate = item;
+						}
 					}
 				}
 			}
+			if (candidate !== undefined) {
+				result.push(candidate);
+			}
 		}
-		return candidate;
+		return result.length > 0 ? result : undefined;
 	}
 
 	private asLocation(value: Range | lsp.Location): lsp.Location {
