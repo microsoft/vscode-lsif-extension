@@ -80,7 +80,7 @@ export function activate(context: ExtensionContext) {
 			resolve(client);
 		}, (error) => {
 			reject(error);
-		})
+		});
 	});
 
 	workspace.registerFileSystemProvider('lsif', new LsifFS(clientPromise), { isCaseSensitive: true, isReadonly: true});
