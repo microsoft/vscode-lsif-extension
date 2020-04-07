@@ -62,6 +62,14 @@ export function activate(context: ExtensionContext) {
 
 	// Options to control the language client
 	let clientOptions: LanguageClientOptions = {
+		uriConverters: {
+			protocol2Code: (value) => {
+				return Uri.parse(value);
+			},
+			code2Protocol: (value) => {
+				return value.toString(true);
+			}
+		}
 	};
 
 	// Create the language client and start the client.

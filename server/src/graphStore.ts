@@ -9,7 +9,7 @@ import * as lsp from 'vscode-languageserver';
 import { Database, UriTransformer } from './database';
 import {
 	Id, EdgeLabels, DefinitionResult, FoldingRangeResult, DocumentSymbolResult, RangeBasedDocumentSymbol, Range, HoverResult,
-	ReferenceResult, ItemEdgeProperties, DeclarationResult, Moniker, Group, MonikerKind
+	ReferenceResult, ItemEdgeProperties, DeclarationResult, Moniker, Group, MonikerKind, Vertex, Edge
 } from 'lsif-protocol';
 import { MetaData, CompressorDescription, CompressionKind } from './protocol.compress';
 import { DocumentInfo } from './files';
@@ -362,6 +362,11 @@ class LocationRetriever extends Retriever<LocationResult> {
 	}
 }
 
+interface ResultPath<T> {
+	path: { vertex: Id, moniker: Moniker | undefined }[];
+	result: { value: T, moniker: Moniker | undefined } | undefined;
+}
+
 export class GraphStore extends Database {
 
 	private db!: Sqlite.Database;
@@ -535,7 +540,7 @@ export class GraphStore extends Database {
 
 	private readGroup(): void {
 		// take the first group
-		const group: Group = this.decompress(JSON.parse(this.db.prepare('Select v.value from vertices v Inner Join groups g On v.id = g.id').get().value));
+		const group: Group = this.decompress(this.db.prepare('Select v.value from vertices v Inner Join groups g On v.id = g.id').get().value);
 		if (group !== undefined) {
 			this.groupId = group.id;
 			this.projectRoot = URI.parse(group.rootUri);
@@ -616,7 +621,7 @@ export class GraphStore extends Database {
 			let data = vertexRetriever.run();
 			let ranges: Map<Id, Range> = new Map();
 			for (let element of data) {
-				let range: Range = this.decompress(JSON.parse(element.value));
+				let range: Range = this.decompress(element.value);
 				if (range) {
 					ranges.set(range.id, range);
 				}
@@ -802,7 +807,7 @@ export class GraphStore extends Database {
 		if (mr) {
 			for (const moniker of mr) {
 				if (!monikers.has(moniker.id)) {
-					monikers.set(moniker.id, this.decompress(JSON.parse(moniker.value)));
+					monikers.set(moniker.id, this.decompress(moniker.value));
 				}
 			}
 		}
@@ -810,7 +815,7 @@ export class GraphStore extends Database {
 		const rqr: VertexResult[] = this.findResultFromReferenceResult.all({ id: referenceResult.id });
 		if (rqr && rqr.length > 0) {
 			for (const item of rqr) {
-				this.resolveReferenceResult(result, dedupRanges, monikers, this.decompress(JSON.parse(item.value)), context);
+				this.resolveReferenceResult(result, dedupRanges, monikers, this.decompress(item.value), context);
 			}
 		}
 	}
@@ -833,7 +838,7 @@ export class GraphStore extends Database {
 		if (moniker === undefined) {
 			return;
 		}
-		const result: Moniker[] = [this.decompress(JSON.parse(moniker.value))];
+		const result: Moniker[] = [this.decompress(moniker.value)];
 		// Search for attached monikers.
 		for (const moniker of result) {
 			monikers.set(moniker.id, moniker);
@@ -842,7 +847,7 @@ export class GraphStore extends Database {
 
 	private findMatchingMonikers(moniker: Moniker): Moniker[] {
 		const results: VertexResult[] = this.findMatchingMonikersStmt.all({ identifier: moniker.identifier, scheme: moniker.scheme, exclude: moniker.id });
-		return results.map(vertex => this.decompress(JSON.parse(vertex.value)));
+		return results.map(vertex => this.decompress(vertex.value));
 	}
 
 	private findVertexIdForMoniker(moniker: Moniker): Id | undefined {
@@ -897,7 +902,30 @@ export class GraphStore extends Database {
 		if (result === undefined) {
 			return [undefined, currentId];
 		}
-		return [this.decompress(JSON.parse(result.value)), currentId];
+		return [this.decompress(result.value), currentId];
+	}
+
+	private getResultPath(start: Id, label: EdgeLabels.textDocument_hover): ResultPath<HoverResult>;
+	private getResultPath(start: Id, label: EdgeLabels.textDocument_declaration): ResultPath<DeclarationResult>;
+	private getResultPath(start: Id, label: EdgeLabels.textDocument_definition): ResultPath<DeclarationResult>;
+	private getResultPath(start: Id, label: EdgeLabels.textDocument_references): ResultPath<ReferenceResult>;
+	private getResultPath(start: Id, label: EdgeLabels): ResultPath<any> {
+		let currentId = start;
+		const result: ResultPath<any> = { path: [], result: undefined };
+		do {
+			const value: any | undefined = this.findResult(currentId, label);
+			const moniker: Moniker | undefined = this.findMoniker(currentId);
+			if (value !== undefined) {
+				result.result = { value, moniker };
+				return result;
+			}
+			result.path.push({ vertex: currentId, moniker });
+			const next = this.findNextVertex(currentId);
+			if (next === undefined) {
+				return result;
+			}
+			currentId = next.id;
+		} while (true);
 	}
 
 	private getEdgeLabel(label: EdgeLabels): EdgeLabels | number {
@@ -962,16 +990,40 @@ export class GraphStore extends Database {
 		if (data === undefined) {
 			return undefined;
 		}
-		return this.decompress(JSON.parse(data.value));
+		return this.decompress(data.value);
 	}
 
-	private decompress(value: any): any {
-		if (Array.isArray(value)) {
-			let decompressor = Decompressor.get(value[0]);
-			if (decompressor) {
-				return decompressor.decompress(value);
-			}
+	private findResult(vertexId: Id, label: EdgeLabels): HoverResult | DeclarationResult | DefinitionResult | ReferenceResult | undefined {
+		const qr: VertexResult | undefined = this.findResultStmt.get({ source: vertexId, label: this.getEdgeLabel(label)});
+		if (qr === undefined) {
+			return undefined;
 		}
-		return value;
+		return this.decompress<HoverResult | DeclarationResult | DefinitionResult | ReferenceResult>(qr.value);
+	}
+
+	private findMoniker(vertexId: Id): Moniker | undefined {
+		const qr: VertexResult | undefined = this.findMonikerStmt.get({ source: vertexId });
+		if (qr === undefined) {
+			return undefined;
+		}
+		return this.decompress<Moniker>(qr.value);
+	}
+
+	private findNextVertex(vertexId: Id): Vertex | undefined {
+		const qr = this.findNextVertexStmt.get({ source: vertexId });
+		if (qr === undefined) {
+			return undefined;
+		}
+		return this.decompress<Vertex>(qr.value);
+	}
+
+	private decompress<T extends (Vertex | Edge)>(value: string | any[]): T {
+		const compressed: any[] = typeof value === 'string' ? JSON.parse(value) : value;
+		let decompressor = Decompressor.get(compressed[0]);
+		if (decompressor) {
+			return decompressor.decompress(compressed);
+		} else {
+			throw new Error(`No decompressor found for ${JSON.stringify(compressed, undefined, 0)}`);
+		}
 	}
 }
