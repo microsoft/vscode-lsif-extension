@@ -53,7 +53,7 @@
 		"vscode:prepublish": "cd client && npm run update-vscode && cd .. && npm run compile",
 		"compile": "tsc -b",
 		"watch": "tsc -b -w",
-		"postinstall": "cd client && yarn install && cd ../server && yarn install && cd .."
+		"postinstall": "cd client && npm install && cd ../server && npm install && cd .."
 	},
 	"devDependencies": {
 		"@types/mocha": "^7.0.2",
