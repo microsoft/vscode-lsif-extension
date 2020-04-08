@@ -10,7 +10,7 @@ import { URI } from 'vscode-uri';
 
 import {
 	Id, EdgeLabels, DefinitionResult, FoldingRangeResult, DocumentSymbolResult, RangeBasedDocumentSymbol, Range, HoverResult,
-	ReferenceResult, ItemEdgeProperties, DeclarationResult, Moniker, Group, MonikerKind, Vertex, Edge
+	ReferenceResult, ItemEdgeProperties, DeclarationResult, Moniker, Group, MonikerKind, Vertex, Edge, UniquenessLevel
 } from 'lsif-protocol';
 import { Database, UriTransformer } from './database';
 import { MetaData, CompressorDescription, CompressionKind } from './protocol.compress';
@@ -229,6 +229,10 @@ interface NextResult {
 	inV: number;
 }
 
+interface AttachResult {
+	inV: number;
+}
+
 interface DocumentInfoResult extends IdResult {
 	groupId: Id;
 	projectId: Id;
@@ -390,6 +394,7 @@ export class GraphStore extends Database {
 	private retrieveNextVertexStmt!: Sqlite.Statement;
 
 	private retrieveMonikerStmt!: Sqlite.Statement;
+	private retrieveAttachMonikerStmt!: Sqlite.Statement;
 	private findVerticesForMonikerStmt!: Sqlite.Statement;
 	private findMatchingMonikersStmt!: Sqlite.Statement;
 	private findAttachedMonikersStmt!: Sqlite.Statement;
@@ -453,6 +458,11 @@ export class GraphStore extends Database {
 		this.retrieveNextVertexStmt = this.db.prepare([
 			'Select e.inV From edges e',
 			`Where e.outV = $source and e.label = ${nextLabel}`
+		].join(' '));
+
+		this.retrieveAttachMonikerStmt = this.db.prepare([
+			'Select e.inV From edges e',
+			`Where e.outV = $source and e.label = ${attachEdgeLabel}`
 		].join(' '));
 
 		this.retrieveMonikerStmt = this.db.prepare([
@@ -733,7 +743,7 @@ export class GraphStore extends Database {
 
 			this.retrieveLocationsFromResult(result, resultPath.result.value);
 
-			const mostSpecificMoniker = this.getMostSpecificMoniker(resultPath);
+			const mostSpecificMoniker = this.getClosestMoniker(resultPath);
 			const monikers: DedupeArray<Moniker> = new DedupeArray<Moniker>(Monikers.makeKey);
 			if (mostSpecificMoniker !== undefined) {
 				monikers.push(mostSpecificMoniker);
@@ -777,9 +787,10 @@ export class GraphStore extends Database {
 				return undefined;
 			}
 
-			const mostSpecificMoniker = this.getMostSpecificMoniker(resultPath);
-			if (mostSpecificMoniker !== undefined) {
-				monikers.push(mostSpecificMoniker);
+			const moniker = this.getClosestMoniker(resultPath);
+			if (moniker !== undefined) {
+				const attachedMonikers = this.findAttachedMonikers(moniker);
+				monikers.push(this.getMostUniqueMoniker(attachedMonikers.concat([moniker]))!);
 			}
 			this.resolveReferenceResult(result, monikers, resultPath.result.value, context);
 			for (const moniker of monikers) {
@@ -859,7 +870,7 @@ export class GraphStore extends Database {
 		} while (true);
 	}
 
-	private getMostSpecificMoniker<T>(result: ResultPath<T>): Moniker | undefined {
+	private getClosestMoniker<T>(result: ResultPath<T>): Moniker | undefined {
 		if (result.result?.moniker !== undefined) {
 			return result.result.moniker;
 		}
@@ -869,6 +880,26 @@ export class GraphStore extends Database {
 			}
 		}
 		return undefined;
+	}
+
+	private static UniqueMapping = new Map<UniquenessLevel, number>([
+		[UniquenessLevel.document, 1000],
+		[UniquenessLevel.project, 2000],
+		[UniquenessLevel.group, 3000],
+		[UniquenessLevel.scheme, 4000],
+		[UniquenessLevel.global, 5000]
+	]);
+	private getMostUniqueMoniker(monikers: Moniker[]): Moniker | undefined {
+		if (monikers.length === 0) {
+			return undefined;
+		}
+		let result: Moniker = monikers[0];
+		for (let i = 1; i < monikers.length; i++) {
+			if (GraphStore.UniqueMapping.get(monikers[i].unique)! > GraphStore.UniqueMapping.get(result.unique)!) {
+				result = monikers[i];
+			}
+		}
+		return result;
 	}
 
 	private findRangesFromPosition(uri: string, position: lsp.Position): RangeResult[] | undefined {
@@ -907,7 +938,15 @@ export class GraphStore extends Database {
 	}
 
 	private findVerticesForMoniker(moniker: Moniker): VertexResult[] {
-		return this.findVerticesForMonikerStmt.all({ id: moniker.id });
+		let currentId = moniker.id;
+		do {
+			const target: AttachResult = this.retrieveAttachMonikerStmt.get({ source: currentId });
+			if (target === undefined) {
+				break;
+			}
+			currentId = target.inV;
+		} while (true);
+		return this.findVerticesForMonikerStmt.all({ id: currentId });
 	}
 
 	private retrieveResult(vertexId: Id, label: EdgeLabels.textDocument_hover): HoverResult | undefined;
