@@ -2,19 +2,20 @@
  * Copyright (c) Microsoft Corporation. All rights reserved.
  * Licensed under the MIT License. See License.txt in the project root for license information.
  * ------------------------------------------------------------------------------------------ */
+import * as crypto from 'crypto';
+
 import * as Sqlite from 'better-sqlite3';
-
 import * as lsp from 'vscode-languageserver';
+import { URI } from 'vscode-uri';
 
-import { Database, UriTransformer } from './database';
 import {
 	Id, EdgeLabels, DefinitionResult, FoldingRangeResult, DocumentSymbolResult, RangeBasedDocumentSymbol, Range, HoverResult,
 	ReferenceResult, ItemEdgeProperties, DeclarationResult, Moniker, Group, MonikerKind, Vertex, Edge
 } from 'lsif-protocol';
+import { Database, UriTransformer } from './database';
 import { MetaData, CompressorDescription, CompressionKind } from './protocol.compress';
 import { DocumentInfo } from './files';
-import { URI } from 'vscode-uri';
-import { compileFunction } from 'vm';
+import { DedupeArray } from './dedupedArray';
 
 interface DecompressorPropertyDescription {
 	name: string;
@@ -228,10 +229,6 @@ interface NextResult {
 	inV: number;
 }
 
-interface PreviousResult {
-	outV: number;
-}
-
 interface DocumentInfoResult extends IdResult {
 	groupId: Id;
 	projectId: Id;
@@ -367,25 +364,41 @@ interface ResultPath<T> {
 	result: { value: T, moniker: Moniker | undefined } | undefined;
 }
 
+namespace Locations {
+	export function makeKey(location: lsp.Location): string {
+		const range = location.range;
+		return crypto.createHash('md5').update(JSON.stringify({ d: location.uri, sl: range.start.line, sc: range.start.character, el: range.end.line, ec: range.end.character }, undefined, 0)).digest('base64');
+	}
+}
+
+namespace Monikers {
+	export function makeKey(moniker: Moniker): string {
+		return crypto.createHash('md5').update(JSON.stringify({ s: moniker.scheme, i: moniker.identifier }, undefined, 0)).digest('base64');
+	}
+}
+
 export class GraphStore extends Database {
 
 	private db!: Sqlite.Database;
 
 	private allDocumentsStmt!: Sqlite.Statement;
 	private getDocumentContentStmt!: Sqlite.Statement;
-	private findRangeStmt!: Sqlite.Statement;
+	private findRangesStmt!: Sqlite.Statement;
 	private findDocumentStmt!: Sqlite.Statement;
-	private findResultStmt!: Sqlite.Statement;
-	private findMonikerStmt!: Sqlite.Statement;
+
+	private retrieveResultStmt!: Sqlite.Statement;
+	private retrieveNextVertexStmt!: Sqlite.Statement;
+
+	private retrieveMonikerStmt!: Sqlite.Statement;
+	private findVerticesForMonikerStmt!: Sqlite.Statement;
 	private findMatchingMonikersStmt!: Sqlite.Statement;
-	private findVertexIdForMonikerStmt!: Sqlite.Statement;
-	private findNextVertexStmt!: Sqlite.Statement;
-	private findPreviousVertexStmt!: Sqlite.Statement;
-	private findResultForDocumentStmt!: Sqlite.Statement;
+	private findAttachedMonikersStmt!: Sqlite.Statement;
+
+	private retrieveResultForDocumentStmt!: Sqlite.Statement;
+	private retrieveRangesFromResultStmt!: Sqlite.Statement;
 	private findRangeFromReferenceResult!: Sqlite.Statement;
 	private findResultFromReferenceResult!: Sqlite.Statement;
-	private findCascadesFromReferenceResult!: Sqlite.Statement;
-	private findRangeFromResult!: Sqlite.Statement;
+	private findLinksFromReferenceResult!: Sqlite.Statement;
 
 	private projectRoot!: URI;
 	private groupId!: Id;
@@ -401,11 +414,17 @@ export class GraphStore extends Database {
 		this.db = new Sqlite(file, { readonly: true });
 		this.readMetaData();
 		this.readGroup();
+
+		const nextLabel = this.edgeLabels !== undefined ? this.edgeLabels.get(EdgeLabels.next)! : EdgeLabels.next;
+		const monikerEdgeLabel = this.edgeLabels !== undefined ? this.edgeLabels.get(EdgeLabels.moniker)! : EdgeLabels.moniker;
+		const attachEdgeLabel = this.edgeLabels !== undefined ? this.edgeLabels.get(EdgeLabels.attach) : EdgeLabels.attach;
+
 		this.allDocumentsStmt = this.db.prepare('Select id, uri, documentHash From documents');
 		this.getDocumentContentStmt = this.db.prepare('Select content From contents Where documentHash = ?');
 		this.findDocumentStmt = this.db.prepare('Select id From documents Where uri = ?');
+
 		/* eslint-disable indent */
-		this.findRangeStmt = this.db.prepare([
+		this.findRangesStmt = this.db.prepare([
 			'Select r.id, r.belongsTo, r.startLine, r.startCharacter, r.endline, r.endCharacter From ranges r',
 			'Inner Join documents d On r.belongsTo = d.id',
 			'where',
@@ -417,68 +436,75 @@ export class GraphStore extends Database {
 			  	')'
 		].join(' '));
 		/* eslint-enable indent */
-		const nextLabel = this.edgeLabels !== undefined ? this.edgeLabels.get(EdgeLabels.next)! : EdgeLabels.next;
-		const monikerEdgeLabel = this.edgeLabels !== undefined ? this.edgeLabels.get(EdgeLabels.moniker)! : EdgeLabels.moniker;
 
-		this.findResultStmt = this.db.prepare([
+		this.retrieveResultStmt = this.db.prepare([
 			'Select v.id, v.label, v.value From vertices v',
 			'Inner Join edges e On e.inV = v.id',
 			'Where e.outV = $source and e.label = $label'
 		].join(' '));
-		this.findMonikerStmt = this.db.prepare([
-			'Select v.id, v.label, v.value From vertices v',
-			'Inner Join edges e On e.inV = v.id',
-			`Where e.outV = $source and e.label = ${monikerEdgeLabel}`
-		].join(' '));
-		this.findMatchingMonikersStmt = this.db.prepare([
-			'Select v.id, v.label, v.value From vertices v',
-			'Inner Join monikers m on v.id = m.id',
-			'Where m.identifier = $identifier and m.scheme = $scheme and m.id != $exclude'
-		].join(' '));
-		this.findVertexIdForMonikerStmt = this.db.prepare([
-			'Select v.id from vertices v',
-			'INNER Join edges e On v.id = e.outV',
-			`Where e.label = ${monikerEdgeLabel} and e.inV = $id`
-		].join(' '));
 
-		this.findNextVertexStmt = this.db.prepare([
-			'Select e.inV From edges e',
-			`Where e.outV = $source and e.label = ${nextLabel}`
-		].join(' '));
-		this.findPreviousVertexStmt = this.db.prepare([
-			'Select e.outV From edges e',
-			`Where e.inV = $source and e.label = ${nextLabel}`
-		].join(' '));
-
-		this.findResultForDocumentStmt = this.db.prepare([
+		this.retrieveResultForDocumentStmt = this.db.prepare([
 			'Select v.id, v.label, v.value from vertices v',
 			'Inner Join edges e On e.inV = v.id',
 			'Inner Join documents d On d.id = e.outV',
 			'Where d.uri = $uri and e.label = $label'
 		].join(' '));
 
-		this.findRangeFromResult = this.db.prepare([
+		this.retrieveNextVertexStmt = this.db.prepare([
+			'Select e.inV From edges e',
+			`Where e.outV = $source and e.label = ${nextLabel}`
+		].join(' '));
+
+		this.retrieveMonikerStmt = this.db.prepare([
+			'Select v.id, v.label, v.value From vertices v',
+			'Inner Join edges e On e.inV = v.id',
+			`Where e.outV = $source and e.label = ${monikerEdgeLabel}`
+		].join(' '));
+
+		this.findMatchingMonikersStmt = this.db.prepare([
+			'Select v.id, v.label, v.value From vertices v',
+			'Inner Join monikers m on v.id = m.id',
+			'Where m.identifier = $identifier and m.scheme = $scheme and m.id != $exclude'
+		].join(' '));
+
+		this.findAttachedMonikersStmt = this.db.prepare([
+			'Select v.id, v.label, v.value From vertices v',
+			'Inner Join edges e on v.id = e.outV',
+			`Where e.inV = $target and e.label = ${attachEdgeLabel}`
+		].join(' '));
+
+		this.findVerticesForMonikerStmt = this.db.prepare([
+			'Select v.id, v.label, v.value from vertices v',
+			'INNER Join edges e On v.id = e.outV',
+			`Where e.label = ${monikerEdgeLabel} and e.inV = $id`
+		].join(' '));
+
+		this.retrieveRangesFromResultStmt = this.db.prepare([
 			'Select r.id, r.startLine, r.startCharacter, r.endLine, r.endCharacter, d.uri from ranges r',
 			'Inner Join items i On i.inV = r.id',
 			'Inner Join documents d On r.belongsTo = d.id',
 			'Where i.outV = $id'
 		].join(' '));
+
 		this.findRangeFromReferenceResult = this.db.prepare([
 			'Select r.id, r.startLine, r.startCharacter, r.endLine, r.endCharacter, i.property, d.uri from ranges r',
 			'Inner Join items i On i.inV = r.id',
 			'Inner Join documents d On r.belongsTo = d.id',
 			'Where i.outV = $id and (i.property in (1, 2, 3))'
 		].join(' '));
+
 		this.findResultFromReferenceResult = this.db.prepare([
 			'Select v.id, v.label, v.value from vertices v',
 			'Inner Join items i On i.inV = v.id',
 			'Where i.outV = $id and i.property = 4'
 		].join(' '));
-		this.findCascadesFromReferenceResult = this.db.prepare([
+
+		this.findLinksFromReferenceResult = this.db.prepare([
 			'Select v.id, v.label, v.value from vertices v',
 			'Inner Join items i On i.inV = v.id',
 			'Where i.outV = $id and i.property = 5'
 		].join(' '));
+
 		this.initialize(transformerFactory);
 		return Promise.resolve();
 	}
@@ -577,7 +603,7 @@ export class GraphStore extends Database {
 	}
 
 	public foldingRanges(uri: string): lsp.FoldingRange[] | undefined {
-		let foldingResult = this.getResultForDocument(this.toDatabase(uri), EdgeLabels.textDocument_foldingRange);
+		let foldingResult = this.retrieveResultForDocument(this.toDatabase(uri), EdgeLabels.textDocument_foldingRange);
 		if (foldingResult === undefined) {
 			return undefined;
 		}
@@ -585,7 +611,7 @@ export class GraphStore extends Database {
 	}
 
 	public documentSymbols(uri: string): lsp.DocumentSymbol[] | undefined {
-		let symbolResult = this.getResultForDocument(this.toDatabase(uri), EdgeLabels.textDocument_documentSymbol);
+		let symbolResult = this.retrieveResultForDocument(this.toDatabase(uri), EdgeLabels.textDocument_documentSymbol);
 		if (symbolResult === undefined) {
 			return undefined;
 		}
@@ -633,14 +659,14 @@ export class GraphStore extends Database {
 	}
 
 	public hover(uri: string, position: lsp.Position): lsp.Hover | undefined {
-		const ranges = this.findRange(this.toDatabase(uri), position);
+		const ranges = this.findRangesFromPosition(this.toDatabase(uri), position);
 		if (ranges === undefined) {
 			return undefined;
 		}
 
 		const findHover = (range: RangeResult): lsp.Hover | undefined =>  {
-			const [hoverResult, anchorId] = this.getResultForId(range.id, EdgeLabels.textDocument_hover);
-			if (hoverResult === undefined || hoverResult.result === undefined) {
+			const hoverResult = this.getResultPath(range.id, EdgeLabels.textDocument_hover).result?.value;
+			if (hoverResult === undefined) {
 				return undefined;
 			}
 			const result: lsp.Hover = Object.assign(Object.create(null), hoverResult.result);
@@ -686,177 +712,167 @@ export class GraphStore extends Database {
 	}
 
 	public declarations(uri: string, position: lsp.Position): lsp.Location | lsp.Location[] | undefined {
-		const ranges = this.findRange(this.toDatabase(uri), position);
-		if (ranges === undefined) {
-			return undefined;
-		}
-
-		const findDeclaration = (range: RangeResult): lsp.Location | lsp.Location[] | undefined => {
-			const [declarationResult] = this.getResultForId(range.id, EdgeLabels.textDocument_declaration);
-			if (declarationResult === undefined) {
-				return undefined;
-			}
-
-			const result: lsp.Location[] = [];
-			const queryResult: LocationResult[] = this.findRangeFromResult.all({ id: declarationResult.id });
-			if (queryResult && queryResult.length > 0) {
-				for(let item of queryResult) {
-					result.push(this.createLocation(item));
-				}
-			}
-			return result;
-		};
-
-		for (const range of ranges) {
-			const result = findDeclaration(range);
-			if (result !== undefined) {
-				return result;
-			}
-		}
-		return undefined;
+		return this.findTargets(uri, position, EdgeLabels.textDocument_declaration);
 	}
 
 	public definitions(uri: string, position: lsp.Position): lsp.Location | lsp.Location[] | undefined {
-		const ranges = this.findRange(this.toDatabase(uri), position);
+		return this.findTargets(uri, position, EdgeLabels.textDocument_definition);
+	}
+
+	private findTargets(uri: string, position: lsp.Position, edgeLabel: EdgeLabels.textDocument_declaration | EdgeLabels.textDocument_definition): lsp.Location | lsp.Location[] | undefined {
+		const ranges = this.findRangesFromPosition(this.toDatabase(uri), position);
 		if (ranges === undefined) {
 			return undefined;
 		}
 
-		const findDefinitions = (range: RangeResult): lsp.Location | lsp.Location[] | undefined => {
-			const [definitionResult] = this.getResultForId(range.id, EdgeLabels.textDocument_definition);
-			if (definitionResult === undefined) {
+		const _findTargets = (result: DedupeArray<lsp.Location>, range: RangeResult): void => {
+			const resultPath = this.getResultPath(range.id, edgeLabel);
+			if (resultPath.result === undefined) {
 				return undefined;
 			}
 
-			const result: lsp.Location[] = [];
-			const queryResult: LocationResult[] = this.findRangeFromResult.all({ id: definitionResult.id });
-			if (queryResult && queryResult.length > 0) {
-				for(let item of queryResult) {
-					result.push(this.createLocation(item));
+			this.retrieveLocationsFromResult(result, resultPath.result.value);
+
+			const mostSpecificMoniker = this.getMostSpecificMoniker(resultPath);
+			const monikers: DedupeArray<Moniker> = new DedupeArray<Moniker>(Monikers.makeKey);
+			if (mostSpecificMoniker !== undefined) {
+				monikers.push(mostSpecificMoniker);
+				for (const attached of this.findAttachedMonikers(mostSpecificMoniker)) {
+					monikers.push(attached);
 				}
 			}
-			return result;
+			for (const moniker of monikers.value.sort()) {
+				const matchingMonikers =  this.findMatchingMonikers(moniker);
+				if (matchingMonikers !== undefined) {
+					for (const matchingMoniker of matchingMonikers) {
+						const vertices = this.findVerticesForMoniker(matchingMoniker);
+						for (const vertex of vertices) {
+							const resultPath = this.getResultPath(vertex.id, edgeLabel);
+							if (resultPath.result === undefined) {
+								continue;
+							}
+							this.retrieveLocationsFromResult(result, resultPath.result.value);
+						}
+					}
+				}
+			}
 		};
 
+		const result: DedupeArray<lsp.Location> = new DedupeArray<lsp.Location>(Locations.makeKey);
 		for (const range of ranges) {
-			const result = findDefinitions(range);
-			if (result !== undefined) {
-				return result;
-			}
+			_findTargets(result, range);
 		}
-		return undefined;
+		return result.value;
 	}
 
 	public references(uri: string, position: lsp.Position, context: lsp.ReferenceContext): lsp.Location[] | undefined {
-		const ranges = this.findRange(this.toDatabase(uri), position);
+		const ranges = this.findRangesFromPosition(this.toDatabase(uri), position);
 		if (ranges === undefined) {
 			return undefined;
 		}
 
-		const result: lsp.Location[] = [];
-		const monikers: Map<Id, Moniker> = new Map();
-		const dedupRanges = new Set<Id>();
-
-		const findReferences = (result: lsp.Location[], dedupRanges: Set<Id>, monikers: Map<Id, Moniker>, range: RangeResult): void => {
-			const [referenceResult, anchorId] = this.getResultForId(range.id, EdgeLabels.textDocument_references);
-			if (referenceResult === undefined) {
+		const findReferences = (result: DedupeArray<lsp.Location>, monikers: DedupeArray<Moniker>, range: RangeResult): void => {
+			const resultPath = this.getResultPath(range.id, EdgeLabels.textDocument_references);
+			if (resultPath.result === undefined) {
 				return undefined;
 			}
 
-			this.resolveReferenceResult(result, dedupRanges, monikers, referenceResult, context);
-			this.findMonikersForVertex(monikers, anchorId);
-			for (const moniker of monikers.values()) {
+			const mostSpecificMoniker = this.getMostSpecificMoniker(resultPath);
+			if (mostSpecificMoniker !== undefined) {
+				monikers.push(mostSpecificMoniker);
+			}
+			this.resolveReferenceResult(result, monikers, resultPath.result.value, context);
+			for (const moniker of monikers) {
 				if (moniker.kind === MonikerKind.local) {
 					continue;
 				}
 				const matchingMonikers = this.findMatchingMonikers(moniker);
 				for (const matchingMoniker of matchingMonikers) {
-					const vertexId = this.findVertexIdForMoniker(matchingMoniker);
-					if (vertexId === undefined) {
-						continue;
+					const vertices = this.findVerticesForMoniker(matchingMoniker);
+					for (const vertex of vertices) {
+						const resultPath = this.getResultPath(vertex.id, EdgeLabels.textDocument_references);
+						if (resultPath.result === undefined) {
+							continue;
+						}
+						this.resolveReferenceResult(result, monikers, resultPath.result.value, context);
 					}
-					const [referenceResult] = this.getResultForId(vertexId, EdgeLabels.textDocument_references);
-					if (referenceResult === undefined) {
-						continue;
-					}
-					this.resolveReferenceResult(result, dedupRanges, monikers, referenceResult, context);
 				}
 			}
 		};
 
+		const result: DedupeArray<lsp.Location> = new DedupeArray<lsp.Location>(Locations.makeKey);
+		const monikers: DedupeArray<Moniker> = new DedupeArray<Moniker>(Monikers.makeKey);
 		for (const range of ranges) {
-			findReferences(result, dedupRanges, monikers, range);
+			findReferences(result, monikers, range);
 		}
-
-		return result;
+		return result.value;
 	}
 
-	private resolveReferenceResult(result: lsp.Location[], dedupRanges: Set<Id>, monikers: Map<Id, Moniker>, referenceResult: ReferenceResult, context: lsp.ReferenceContext): void {
+	private resolveReferenceResult(result: DedupeArray<lsp.Location>, monikers: DedupeArray<Moniker>, referenceResult: ReferenceResult, context: lsp.ReferenceContext): void {
 		const qr: LocationResultWithProperty[] = this.findRangeFromReferenceResult.all({ id: referenceResult.id });
 		if (qr && qr.length > 0) {
 			const refLabel = this.getItemEdgeProperty(ItemEdgeProperties.references);
 			for (const item of qr) {
-				if (item.property === refLabel || context.includeDeclaration && !dedupRanges.has(item.id)) {
-					dedupRanges.add(item.id);
-					result.push(this.createLocation(item));
+				if (item.property === refLabel || context.includeDeclaration) {
+					this.addLocation(result, item);
 				}
 			}
 		}
 
-		const mr: VertexResult[] = this.findCascadesFromReferenceResult.all({ id: referenceResult.id });
+		const mr: VertexResult[] = this.findLinksFromReferenceResult.all({ id: referenceResult.id });
 		if (mr) {
 			for (const moniker of mr) {
-				if (!monikers.has(moniker.id)) {
-					monikers.set(moniker.id, this.decompress(moniker.value));
-				}
+				monikers.push(this.decompress(moniker.value));
 			}
 		}
 
 		const rqr: VertexResult[] = this.findResultFromReferenceResult.all({ id: referenceResult.id });
 		if (rqr && rqr.length > 0) {
 			for (const item of rqr) {
-				this.resolveReferenceResult(result, dedupRanges, monikers, this.decompress(item.value), context);
+				this.resolveReferenceResult(result, monikers, this.decompress(item.value), context);
 			}
 		}
 	}
 
-	private findMonikersForVertex(monikers: Map<Id, Moniker>, id: Id): void {
-		let currentId: Id = id;
-		let moniker: VertexResult | undefined;
+	private getResultPath(start: Id, label: EdgeLabels.textDocument_hover): ResultPath<HoverResult>;
+	private getResultPath(start: Id, label: EdgeLabels.textDocument_declaration): ResultPath<DeclarationResult>;
+	private getResultPath(start: Id, label: EdgeLabels.textDocument_definition): ResultPath<DeclarationResult>;
+	private getResultPath(start: Id, label: EdgeLabels.textDocument_declaration | EdgeLabels.textDocument_definition): ResultPath<DeclarationResult | DefinitionResult>;
+	private getResultPath(start: Id, label: EdgeLabels.textDocument_references): ResultPath<ReferenceResult>;
+	private getResultPath(start: Id, label: EdgeLabels): ResultPath<HoverResult | DeclarationResult | DeclarationResult | ReferenceResult>
+	private getResultPath(start: Id, label: EdgeLabels): ResultPath<any> {
+		let currentId = start;
+		const result: ResultPath<any> = { path: [], result: undefined };
 		do {
-			moniker = this.findMonikerStmt.get({ source: currentId });
-			if (moniker !== undefined) {
-				break;
+			const value: any | undefined = this.retrieveResult(currentId, label);
+			const moniker: Moniker | undefined = this.retrieveMoniker(currentId);
+			if (value !== undefined) {
+				result.result = { value, moniker };
+				return result;
 			}
-			const previous: PreviousResult = this.findPreviousVertexStmt.get({ source: currentId });
-			if (previous === undefined) {
-				moniker = undefined;
-				break;
+			result.path.push({ vertex: currentId, moniker });
+			const next = this.retrieveNextVertexId(currentId);
+			if (next === undefined) {
+				return result;
 			}
-			currentId = previous.outV;
-		} while (currentId !== undefined);
-		if (moniker === undefined) {
-			return;
+			currentId = next;
+		} while (true);
+	}
+
+	private getMostSpecificMoniker<T>(result: ResultPath<T>): Moniker | undefined {
+		if (result.result?.moniker !== undefined) {
+			return result.result.moniker;
 		}
-		const result: Moniker[] = [this.decompress(moniker.value)];
-		// Search for attached monikers.
-		for (const moniker of result) {
-			monikers.set(moniker.id, moniker);
+		for (let i = result.path.length - 1; i >= 0; i--) {
+			if (result.path[i].moniker !== undefined) {
+				return result.path[i].moniker;
+			}
 		}
+		return undefined;
 	}
 
-	private findMatchingMonikers(moniker: Moniker): Moniker[] {
-		const results: VertexResult[] = this.findMatchingMonikersStmt.all({ identifier: moniker.identifier, scheme: moniker.scheme, exclude: moniker.id });
-		return results.map(vertex => this.decompress(vertex.value));
-	}
-
-	private findVertexIdForMoniker(moniker: Moniker): Id | undefined {
-		const result: IdResult = this.findVertexIdForMonikerStmt.get({ id: moniker.id });
-		return result !== undefined ? result.id : undefined;
-	}
-
-	private findRange(uri: string, position: lsp.Position): RangeResult[] | undefined {
-		let dbResult: RangeResult[] = this.findRangeStmt.all({ uri: uri, line: position.line, character: position.character});
+	private findRangesFromPosition(uri: string, position: lsp.Position): RangeResult[] | undefined {
+		let dbResult: RangeResult[] = this.findRangesStmt.all({ uri: uri, line: position.line, character: position.character});
 		if (dbResult === undefined || dbResult.length === 0) {
 			return undefined;
 		}
@@ -880,52 +896,66 @@ export class GraphStore extends Database {
 		return result;
 	}
 
-	private getResultForId(id: Id, label: EdgeLabels.textDocument_hover): [HoverResult  | undefined, Id];
-	private getResultForId(id: Id, label: EdgeLabels.textDocument_declaration): [DeclarationResult | undefined, Id];
-	private getResultForId(id: Id, label: EdgeLabels.textDocument_definition): [DefinitionResult | undefined, Id];
-	private getResultForId(id: Id, label: EdgeLabels.textDocument_references): [ReferenceResult | undefined, Id];
-	private getResultForId(id: Id, label: EdgeLabels): [any | undefined, Id] {
-		let currentId = id;
-		let result: VertexResult | undefined;
-		do {
-			result = this.findResultStmt.get({ source: currentId, label: this.getEdgeLabel(label)});
-			if (result !== undefined) {
-				break;
-			}
-			const next: NextResult = this.findNextVertexStmt.get({ source: currentId });
-			if (next === undefined) {
-				result = undefined;
-				break;
-			}
-			currentId = next.inV;
-		} while (currentId !== undefined);
-		if (result === undefined) {
-			return [undefined, currentId];
-		}
-		return [this.decompress(result.value), currentId];
+	private findMatchingMonikers(moniker: Moniker): Moniker[] {
+		const results: VertexResult[] = this.findMatchingMonikersStmt.all({ identifier: moniker.identifier, scheme: moniker.scheme, exclude: moniker.id });
+		return results.map(vertex => this.decompress(vertex.value));
 	}
 
-	private getResultPath(start: Id, label: EdgeLabels.textDocument_hover): ResultPath<HoverResult>;
-	private getResultPath(start: Id, label: EdgeLabels.textDocument_declaration): ResultPath<DeclarationResult>;
-	private getResultPath(start: Id, label: EdgeLabels.textDocument_definition): ResultPath<DeclarationResult>;
-	private getResultPath(start: Id, label: EdgeLabels.textDocument_references): ResultPath<ReferenceResult>;
-	private getResultPath(start: Id, label: EdgeLabels): ResultPath<any> {
-		let currentId = start;
-		const result: ResultPath<any> = { path: [], result: undefined };
-		do {
-			const value: any | undefined = this.findResult(currentId, label);
-			const moniker: Moniker | undefined = this.findMoniker(currentId);
-			if (value !== undefined) {
-				result.result = { value, moniker };
-				return result;
+	private findAttachedMonikers(moniker: Moniker): Moniker[] {
+		const result: VertexResult[] = this.findAttachedMonikersStmt.all({ target: moniker.id });
+		return result.map(vertext => this.decompress(vertext.value));
+	}
+
+	private findVerticesForMoniker(moniker: Moniker): VertexResult[] {
+		return this.findVerticesForMonikerStmt.all({ id: moniker.id });
+	}
+
+	private retrieveResult(vertexId: Id, label: EdgeLabels.textDocument_hover): HoverResult | undefined;
+	private retrieveResult(vertexId: Id, label: EdgeLabels.textDocument_declaration): DeclarationResult | undefined;
+	private retrieveResult(vertexId: Id, label: EdgeLabels.textDocument_definition): DefinitionResult | undefined;
+	private retrieveResult(vertexId: Id, label: EdgeLabels.textDocument_references): ReferenceResult | undefined;
+	private retrieveResult(vertexId: Id, label: EdgeLabels): HoverResult | DeclarationResult | DefinitionResult | ReferenceResult | undefined;
+	private retrieveResult(vertexId: Id, label: EdgeLabels): HoverResult | DeclarationResult | DefinitionResult | ReferenceResult | undefined {
+		const qr: VertexResult | undefined = this.retrieveResultStmt.get({ source: vertexId, label: this.getEdgeLabel(label)});
+		if (qr === undefined) {
+			return undefined;
+		}
+		return this.decompress<HoverResult | DeclarationResult | DefinitionResult | ReferenceResult>(qr.value);
+	}
+
+	private retrieveResultForDocument(uri: string, label: EdgeLabels.textDocument_documentSymbol): DocumentSymbolResult | undefined;
+	private retrieveResultForDocument(uri: string, label: EdgeLabels.textDocument_foldingRange): FoldingRangeResult | undefined;
+	private retrieveResultForDocument(uri: string, label: EdgeLabels): any | undefined {
+		let data: DocumentResult = this.retrieveResultForDocumentStmt.get({ uri, label: this.getEdgeLabel(label) });
+		if (data === undefined) {
+			return undefined;
+		}
+		return this.decompress(data.value);
+	}
+
+	private retrieveMoniker(vertexId: Id): Moniker | undefined {
+		const qr: VertexResult | undefined = this.retrieveMonikerStmt.get({ source: vertexId });
+		if (qr === undefined) {
+			return undefined;
+		}
+		return this.decompress<Moniker>(qr.value);
+	}
+
+	private retrieveNextVertexId(vertexId: Id): Id | undefined {
+		const qr: NextResult = this.retrieveNextVertexStmt.get({ source: vertexId });
+		if (qr === undefined) {
+			return undefined;
+		}
+		return qr.inV;
+	}
+
+	private retrieveLocationsFromResult(result: DedupeArray<lsp.Location>, target: DeclarationResult | DefinitionResult | ReferenceResult): void {
+		const queryResult: LocationResult[] = this.retrieveRangesFromResultStmt.all({ id: target.id });
+		if (queryResult && queryResult.length > 0) {
+			for (const item of queryResult) {
+				this.addLocation(result, item);
 			}
-			result.path.push({ vertex: currentId, moniker });
-			const next = this.findNextVertex(currentId);
-			if (next === undefined) {
-				return result;
-			}
-			currentId = next.id;
-		} while (true);
+		}
 	}
 
 	private getEdgeLabel(label: EdgeLabels): EdgeLabels | number {
@@ -968,12 +998,17 @@ export class GraphStore extends Database {
 		return result;
 	}
 
-	private asLocation(value: Id | lsp.Location): lsp.Location {
+	private addLocation(result: DedupeArray<lsp.Location>, value: LocationResult): void {
+		let location: lsp.Location = this.createLocation(value);
+		result.push(location);
+	}
+
+	private asLocation(value: Range | lsp.Location): lsp.Location {
 		if (lsp.Location.is(value)) {
 			return { range: value.range, uri: this.fromDatabase(value.uri)};
 		} else {
 			const locationRetriever = new LocationRetriever(this.db, 1);
-			locationRetriever.add(value);
+			locationRetriever.add(value.id);
 			let data: LocationResult = locationRetriever.run()[0];
 			return this.createLocation(data);
 		}
@@ -981,40 +1016,6 @@ export class GraphStore extends Database {
 
 	private createLocation(data: LocationResult): lsp.Location {
 		return lsp.Location.create(this.fromDatabase(data.uri), lsp.Range.create(data.startLine, data.startCharacter, data.endLine, data.endCharacter));
-	}
-
-	private getResultForDocument(uri: string, label: EdgeLabels.textDocument_documentSymbol): DocumentSymbolResult | undefined;
-	private getResultForDocument(uri: string, label: EdgeLabels.textDocument_foldingRange): FoldingRangeResult | undefined;
-	private getResultForDocument(uri: string, label: EdgeLabels): any | undefined {
-		let data: DocumentResult = this.findResultForDocumentStmt.get({ uri, label: this.getEdgeLabel(label) });
-		if (data === undefined) {
-			return undefined;
-		}
-		return this.decompress(data.value);
-	}
-
-	private findResult(vertexId: Id, label: EdgeLabels): HoverResult | DeclarationResult | DefinitionResult | ReferenceResult | undefined {
-		const qr: VertexResult | undefined = this.findResultStmt.get({ source: vertexId, label: this.getEdgeLabel(label)});
-		if (qr === undefined) {
-			return undefined;
-		}
-		return this.decompress<HoverResult | DeclarationResult | DefinitionResult | ReferenceResult>(qr.value);
-	}
-
-	private findMoniker(vertexId: Id): Moniker | undefined {
-		const qr: VertexResult | undefined = this.findMonikerStmt.get({ source: vertexId });
-		if (qr === undefined) {
-			return undefined;
-		}
-		return this.decompress<Moniker>(qr.value);
-	}
-
-	private findNextVertex(vertexId: Id): Vertex | undefined {
-		const qr = this.findNextVertexStmt.get({ source: vertexId });
-		if (qr === undefined) {
-			return undefined;
-		}
-		return this.decompress<Vertex>(qr.value);
 	}
 
 	private decompress<T extends (Vertex | Edge)>(value: string | any[]): T {

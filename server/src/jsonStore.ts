@@ -459,7 +459,7 @@ export class JsonStore extends Database {
 		// hover. So we take the first range.
 		const range = ranges[0];
 		const hoverResult = this.getResultPath(range.id, this.out.hover).result?.value;
-		if (hoverResult === undefined) {
+		if (hoverResult === undefined || hoverResult.result === undefined) {
 			return undefined;
 		}
 
