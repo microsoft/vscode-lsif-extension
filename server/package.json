@@ -1,9 +1,10 @@
 {
 	"name": "lsif-server",
+	"private": true,
 	"description": "Generic Language Server Index Format Server",
 	"author": "Microsoft Corporation",
 	"license": "MIT",
-	"version": "0.1.0",
+	"version": "0.4.7",
 	"engines": {
 		"node": "*"
 	},
@@ -17,7 +18,8 @@
 	"devDependencies": {
 		"@types/better-sqlite3": "^5.4.0",
 		"@types/semver": "^6.0.0",
-		"electron-rebuild": "^1.8.5"
+		"electron-rebuild": "^1.10.1",
+		"node-abi": "^2.16.0"
 	},
 	"scripts": {}
 }
