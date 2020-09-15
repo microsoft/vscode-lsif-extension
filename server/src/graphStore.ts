@@ -14,7 +14,6 @@ import {
 import { MetaData, CompressorDescription, CompressionKind } from './protocol.compress';
 import { DocumentInfo } from './files';
 import { URI } from 'vscode-uri';
-import { compileFunction } from 'vm';
 
 interface DecompressorPropertyDescription {
 	name: string;
@@ -233,7 +232,6 @@ interface PreviousResult {
 }
 
 interface DocumentInfoResult extends IdResult {
-	groupId: Id;
 	projectId: Id;
 	uri: string;
 	documentHash: string;
