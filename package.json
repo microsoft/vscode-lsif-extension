@@ -1,6 +1,6 @@
 {
-	"name": "vscode-lsif-win32-x64",
-	"description": "Language Server Index Format extension",
+	"name": "lsif-browser",
+	"description": "Extension to browse LSIF databases",
 	"author": "Microsoft Corporation",
 	"publisher": "ms-vscode",
 	"license": "MIT",
@@ -23,6 +23,7 @@
 		"onFileSystem:lsif",
 		"onCommand:lsif.openDatabase"
 	],
+	"enableProposedApi": true,
 	"main": "./client/out/extension",
 	"contributes": {
 		"commands": [
