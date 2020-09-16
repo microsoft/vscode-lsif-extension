@@ -8,7 +8,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 
 import { URI  } from 'vscode-uri';
-import { createConnection, ProposedFeatures, InitializeParams, TextDocumentSyncKind, WorkspaceFolder, ServerCapabilities, TextDocument, TextDocumentPositionParams, TextDocumentIdentifier, BulkUnregistration, BulkRegistration, DocumentSymbolRequest, DocumentSelector, FoldingRangeRequest, HoverRequest, DefinitionRequest, ReferencesRequest, RequestType, DeclarationRequest } from 'vscode-languageserver';
+import { createConnection, ProposedFeatures, InitializeParams, TextDocumentSyncKind, WorkspaceFolder, ServerCapabilities, TextDocument, TextDocumentPositionParams, TextDocumentIdentifier, BulkUnregistration, BulkRegistration, DocumentSymbolRequest, DocumentSelector, FoldingRangeRequest, HoverRequest, DefinitionRequest, ReferencesRequest, RequestType, DeclarationRequest, DocumentFilter } from 'vscode-languageserver';
 
 import { Database, UriTransformer } from './database';
 import { FileType, FileStat } from './files';
@@ -166,7 +166,7 @@ async function checkRegistrations(): Promise<void> {
 	}
 	if (databases.size >= 1 && registrations === undefined) {
 		let documentSelector: DocumentSelector = [
-			{ scheme: 'lsif', }
+			{ scheme: 'lsif', exclusive: true } as DocumentFilter
 		];
 		let toRegister: BulkRegistration = BulkRegistration.create();
 		toRegister.add(DocumentSymbolRequest.type, {
