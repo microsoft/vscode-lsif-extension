@@ -371,6 +371,8 @@ export class GraphStore extends Database {
 	private findResultStmt!: Sqlite.Statement;
 	private findMonikerStmt!: Sqlite.Statement;
 	private findMatchingMonikersStmt!: Sqlite.Statement;
+	private findAttachedMonikersStmt!: Sqlite.Statement;
+	private findNextMonikerStmt!: Sqlite.Statement;
 	private findVertexIdForMonikerStmt!: Sqlite.Statement;
 	private findNextVertexStmt!: Sqlite.Statement;
 	private findPreviousVertexStmt!: Sqlite.Statement;
@@ -412,12 +414,14 @@ export class GraphStore extends Database {
 		/* eslint-enable indent */
 		const nextLabel = this.edgeLabels !== undefined ? this.edgeLabels.get(EdgeLabels.next)! : EdgeLabels.next;
 		const monikerEdgeLabel = this.edgeLabels !== undefined ? this.edgeLabels.get(EdgeLabels.moniker)! : EdgeLabels.moniker;
+		const monikerAttachLabel = this.edgeLabels !== undefined ? this.edgeLabels.get(EdgeLabels.attach)! : EdgeLabels.attach;
 
 		this.findResultStmt = this.db.prepare([
 			'Select v.id, v.label, v.value From vertices v',
 			'Inner Join edges e On e.inV = v.id',
 			'Where e.outV = $source and e.label = $label'
 		].join(' '));
+
 		this.findMonikerStmt = this.db.prepare([
 			'Select v.id, v.label, v.value From vertices v',
 			'Inner Join edges e On e.inV = v.id',
@@ -427,6 +431,15 @@ export class GraphStore extends Database {
 			'Select v.id, v.label, v.value From vertices v',
 			'Inner Join monikers m on v.id = m.id',
 			'Where m.identifier = $identifier and m.scheme = $scheme and m.id != $exclude'
+		].join(' '));
+		this.findAttachedMonikersStmt = this.db.prepare([
+			'Select v.id, v.label, v.value from vertices v',
+			'Inner Join edges e On e.outV = v.id',
+			`Where e.inV = $source and e.label = ${monikerAttachLabel}`
+		].join(' '));
+		this.findNextMonikerStmt = this.db.prepare([
+			'Select e.inV From edges e',
+			`Where e.outV = $source and e.label = ${monikerAttachLabel}`
 		].join(' '));
 		this.findVertexIdForMonikerStmt = this.db.prepare([
 			'Select v.id from vertices v',
@@ -832,9 +845,13 @@ export class GraphStore extends Database {
 			return;
 		}
 		const result: Moniker[] = [this.decompress(JSON.parse(moniker.value))];
-		// Search for attached monikers.
 		for (const moniker of result) {
 			monikers.set(moniker.id, moniker);
+			const attachedMonikersResult: VertexResult[] = this.findAttachedMonikersStmt.all({ source: moniker.id });
+			for (const attachedMonikerResult of attachedMonikersResult) {
+				const attachedMoniker: Moniker = this.decompress(JSON.parse(attachedMonikerResult.value));
+				monikers.set(attachedMoniker.id, attachedMoniker);
+			}
 		}
 	}
 
@@ -844,7 +861,18 @@ export class GraphStore extends Database {
 	}
 
 	private findVertexIdForMoniker(moniker: Moniker): Id | undefined {
-		const result: IdResult = this.findVertexIdForMonikerStmt.get({ id: moniker.id });
+		let currentId: Id = moniker.id;
+		do {
+			const next: NextResult = this.findNextMonikerStmt.get({ source: currentId });
+			if (next === undefined) {
+				break;
+			}
+			currentId = next.inV;
+		} while (currentId !== undefined);
+		if (currentId === undefined) {
+			return;
+		}
+		const result: IdResult = this.findVertexIdForMonikerStmt.get({ id: currentId });
 		return result !== undefined ? result.id : undefined;
 	}
 
