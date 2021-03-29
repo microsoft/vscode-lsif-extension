@@ -547,7 +547,6 @@ export class GraphStore extends Database {
 		// take the first group
 		const group: Group = this.decompress(JSON.parse(this.db.prepare('Select v.value from vertices v Inner Join groups g On v.id = g.id').get().value));
 		if (group !== undefined) {
-			this.groupId = group.id;
 			this.workspaceRoot = URI.parse(group.rootUri);
 		}
 	}
