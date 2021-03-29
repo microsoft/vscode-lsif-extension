@@ -18,7 +18,6 @@ import {
 
 import { DocumentInfo } from './files';
 import { Database, UriTransformer } from './database';
-import { eventNames } from 'cluster';
 
 interface Moniker extends PMoniker {
 	key: string;
@@ -167,7 +166,7 @@ export class JsonStore extends Database {
 						reject(new Error(`No valid semantic version string. The version is: ${this.version}`));
 						return;
 					}
-					const range: SemVer.Range = new SemVer.Range('>0.4.99 <=0.5.0-next.5');
+					const range: SemVer.Range = new SemVer.Range('>0.4.99 <=0.5.3');
 					range.includePrerelease = true;
 					if (!SemVer.satisfies(semVer, range)) {
 						reject(new Error(`Requires version 0.5.0 or higher but received: ${this.version}`));
