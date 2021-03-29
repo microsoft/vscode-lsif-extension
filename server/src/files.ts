@@ -66,28 +66,28 @@ export type Entry = File | Directory;
 
 export class FileSystem {
 
-	private projectRoot: string;
-	private projectRootWithSlash: string;
-	private filesOutsideProjectRoot: Map<string, { id: Id, hash: string | undefined }>;
+	private workspaceRoot: string;
+	private workspaceRootWithSlash: string;
+	private filesOutsideWorkspaceRoot: Map<string, { id: Id, hash: string | undefined }>;
 	private root: Directory;
 
-	constructor(projectRoot: string, documents: DocumentInfo[]) {
-		if (projectRoot.charAt(projectRoot.length - 1) === '/') {
-			this.projectRoot = projectRoot.substr(0, projectRoot.length - 1);
-			this.projectRootWithSlash = projectRoot;
+	constructor(workspaceRoot: string, documents: DocumentInfo[]) {
+		if (workspaceRoot.charAt(workspaceRoot.length - 1) === '/') {
+			this.workspaceRoot = workspaceRoot.substr(0, workspaceRoot.length - 1);
+			this.workspaceRootWithSlash = workspaceRoot;
 		} else {
-			this.projectRoot = projectRoot;
-			this.projectRootWithSlash = projectRoot + '/';
+			this.workspaceRoot = workspaceRoot;
+			this.workspaceRootWithSlash = workspaceRoot + '/';
 		}
 		this.root = Directory.create('');
-		this.filesOutsideProjectRoot = new Map();
+		this.filesOutsideWorkspaceRoot = new Map();
 		for (let info of documents) {
-			// Do not show file outside the projectRoot.
-			if (!info.uri.startsWith(this.projectRootWithSlash)) {
-				this.filesOutsideProjectRoot.set(info.uri, info);
+			// Do not show file outside the workspaceRoot.
+			if (!info.uri.startsWith(this.workspaceRootWithSlash)) {
+				this.filesOutsideWorkspaceRoot.set(info.uri, info);
 				continue;
 			}
-			let p = info.uri.substring(projectRoot.length);
+			let p = info.uri.substring(workspaceRoot.length);
 			let dirname = path.posix.dirname(p);
 			let basename = path.posix.basename(p);
 			let entry = this.lookup(dirname, true);
@@ -98,24 +98,24 @@ export class FileSystem {
 	}
 
 	public stat(uri: string): FileStat | null {
-		if (this.filesOutsideProjectRoot.has(uri)) {
+		if (this.filesOutsideWorkspaceRoot.has(uri)) {
 			return { type: FileType.File, ctime, mtime, size: 0 };
 		}
-		let isRoot = this.projectRoot === uri;
-		if (!uri.startsWith(this.projectRootWithSlash) && !isRoot) {
+		let isRoot = this.workspaceRoot === uri;
+		if (!uri.startsWith(this.workspaceRootWithSlash) && !isRoot) {
 			return null;
 		}
-		let p = isRoot ? '' : uri.substring(this.projectRootWithSlash.length);
+		let p = isRoot ? '' : uri.substring(this.workspaceRootWithSlash.length);
 		let entry = this.lookup(p, false);
 		return entry ? entry : null;
 	}
 
 	public readDirectory(uri: string): [string, FileType][] {
-		let isRoot = this.projectRoot === uri;
-		if (!uri.startsWith(this.projectRootWithSlash) && !isRoot) {
+		let isRoot = this.workspaceRoot === uri;
+		if (!uri.startsWith(this.workspaceRootWithSlash) && !isRoot) {
 			return [];
 		}
-		let p = isRoot ? '' : uri.substring(this.projectRootWithSlash.length);
+		let p = isRoot ? '' : uri.substring(this.workspaceRootWithSlash.length);
 		let entry = this.lookup(p, false);
 		if (entry === undefined || entry.type !== FileType.Directory) {
 			return [];
@@ -128,15 +128,15 @@ export class FileSystem {
 	}
 
 	public getFileInfo(uri: string): { id: Id, hash: string | undefined } | undefined {
-		let result = this.filesOutsideProjectRoot.get(uri);
+		let result = this.filesOutsideWorkspaceRoot.get(uri);
 		if (result !== undefined) {
 			return result;
 		}
-		let isRoot = this.projectRoot === uri;
-		if (!uri.startsWith(this.projectRootWithSlash) && !isRoot) {
+		let isRoot = this.workspaceRoot === uri;
+		if (!uri.startsWith(this.workspaceRootWithSlash) && !isRoot) {
 			return undefined;
 		}
-		let entry = this.lookup(isRoot ? '' : uri.substring(this.projectRootWithSlash.length));
+		let entry = this.lookup(isRoot ? '' : uri.substring(this.workspaceRootWithSlash.length));
 		return entry && entry.type === FileType.File ? entry : undefined;
 	}
 

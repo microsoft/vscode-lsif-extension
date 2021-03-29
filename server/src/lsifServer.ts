@@ -42,16 +42,16 @@ namespace ReadDirectoryRequest {
 class Transformer implements UriTransformer {
 
 	private lsif: string;
-	private projectRoot: string;
+	private workspaceRoot: string;
 
-	constructor(lsif: URI, projectRoot: string) {
+	constructor(lsif: URI, workspaceRoot: string) {
 		this.lsif = lsif.toString();
-		this.projectRoot = projectRoot;
+		this.workspaceRoot = workspaceRoot;
 	}
 	public toDatabase(uri: string): string {
 		if (uri.startsWith(this.lsif)) {
 			let p = uri.substring(this.lsif.length);
-			return `${this.projectRoot}${p}`;
+			return `${this.workspaceRoot}${p}`;
 		} else {
 			let parsed = URI.parse(uri);
 			if (parsed.scheme === LSIF_SCHEME && parsed.query) {
@@ -62,8 +62,8 @@ class Transformer implements UriTransformer {
 		}
 	}
 	public fromDatabase(uri: string): string {
-		if (uri.startsWith(this.projectRoot)) {
-			let p = uri.substring(this.projectRoot.length);
+		if (uri.startsWith(this.workspaceRoot)) {
+			let p = uri.substring(this.workspaceRoot.length);
 			return `${this.lsif}${p}`;
 		} else {
 			let file = URI.parse(uri);
@@ -124,8 +124,8 @@ async function createDatabase(folder: WorkspaceFolder): Promise<Database | undef
 				database = new module.JsonStore();
 			}
 			if (database !== undefined) {
-				let promise = database.load(fsPath, (projectRoot: string) => {
-					return new Transformer(uri, projectRoot);
+				let promise = database.load(fsPath, (workspaceRoot: string) => {
+					return new Transformer(uri, workspaceRoot);
 				}).then(() => {
 					return database!;
 				});

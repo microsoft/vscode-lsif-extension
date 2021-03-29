@@ -82,7 +82,7 @@ namespace Locations {
 export class JsonStore extends Database {
 
 	private version: string | undefined;
-	private projectRoot!: URI;
+	private workspaceRoot!: URI;
 	private activeGroup: Id | undefined;
 	private activeProject: Id | undefined;
 
@@ -129,7 +129,7 @@ export class JsonStore extends Database {
 		};
 	}
 
-	public load(file: string, transformerFactory: (projectRoot: string) => UriTransformer): Promise<void> {
+	public load(file: string, transformerFactory: (workspaceRoot: string) => UriTransformer): Promise<void> {
 		return new Promise<void>((resolve, reject) => {
 			const input: fs.ReadStream = fs.createReadStream(file, { encoding: 'utf8'});
 			input.on('error', reject);
@@ -154,7 +154,7 @@ export class JsonStore extends Database {
 				}
 			});
 			rd.on('close', () => {
-				if (this.projectRoot === undefined) {
+				if (this.workspaceRoot === undefined) {
 					reject(new Error('No project root provided.'));
 					return;
 				}
@@ -181,8 +181,8 @@ export class JsonStore extends Database {
 		});
 	}
 
-	public getProjectRoot(): URI {
-		return this.projectRoot;
+	public getWorkspaceRoot(): URI {
+		return this.workspaceRoot;
 	}
 
 	public close(): void {
@@ -196,7 +196,7 @@ export class JsonStore extends Database {
 				break;
 			case VertexLabels.group:
 				if (vertex.rootUri !== undefined) {
-					this.projectRoot = URI.parse(vertex.rootUri);
+					this.workspaceRoot = URI.parse(vertex.rootUri);
 				}
 				break;
 			case VertexLabels.project:

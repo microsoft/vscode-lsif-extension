@@ -124,7 +124,7 @@ export class BlobStore extends Database {
 	private findHoverStmt!: Sqlite.Statement;
 
 	private version!: string;
-	private projectRoot!: URI;
+	private workspaceRoot!: URI;
 	private blobs: Map<Id, DocumentBlob>;
 
 	public constructor() {
@@ -133,7 +133,7 @@ export class BlobStore extends Database {
 		this.blobs = new Map();
 	}
 
-	public load(file: string, transformerFactory: (projectRoot: string) => UriTransformer): Promise<void> {
+	public load(file: string, transformerFactory: (workspaceRoot: string) => UriTransformer): Promise<void> {
 		this.db = new Sqlite(file, { readonly: true });
 		this.readMetaData();
 		/* eslint-disable indent */
@@ -190,8 +190,8 @@ export class BlobStore extends Database {
 		let metaData: MetaData = JSON.parse(result[0].value);
 	}
 
-	public getProjectRoot(): URI {
-		return this.projectRoot;
+	public getWorkspaceRoot(): URI {
+		return this.workspaceRoot;
 	}
 
 	public close(): void {

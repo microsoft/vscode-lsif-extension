@@ -26,17 +26,17 @@ export abstract class Database {
 	protected constructor() {
 	}
 
-	protected initialize(transformerFactory: (projectRoot: string) => UriTransformer): void {
-		const projectRoot = this.getProjectRoot().toString(true);
-		this.uriTransformer = transformerFactory ? transformerFactory(projectRoot) : noopTransformer;
-		this.fileSystem = new FileSystem(projectRoot, this.getDocumentInfos());
+	protected initialize(transformerFactory: (workspaceRoot: string) => UriTransformer): void {
+		const workspaceRoot = this.getWorkspaceRoot().toString(true);
+		this.uriTransformer = transformerFactory ? transformerFactory(workspaceRoot) : noopTransformer;
+		this.fileSystem = new FileSystem(workspaceRoot, this.getDocumentInfos());
 	}
 
-	public abstract load(file: string, transformerFactory: (projectRoot: string) => UriTransformer): Promise<void>;
+	public abstract load(file: string, transformerFactory: (workspaceRoot: string) => UriTransformer): Promise<void>;
 
 	public abstract close(): void;
 
-	public abstract getProjectRoot(): URI;
+	public abstract getWorkspaceRoot(): URI;
 
 	protected abstract getDocumentInfos(): DocumentInfo[];
 

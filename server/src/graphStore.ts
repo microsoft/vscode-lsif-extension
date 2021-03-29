@@ -382,8 +382,7 @@ export class GraphStore extends Database {
 	private findCascadesFromReferenceResult!: Sqlite.Statement;
 	private findRangeFromResult!: Sqlite.Statement;
 
-	private projectRoot!: URI;
-	private groupId!: Id;
+	private workspaceRoot!: URI;
 	private vertexLabels: Map<string, number> | undefined;
 	private edgeLabels: Map<string, number> | undefined;
 	private itemEdgeProperties: Map<string, number> | undefined;
@@ -392,7 +391,7 @@ export class GraphStore extends Database {
 		super();
 	}
 
-	public load(file: string, transformerFactory: (projectRoot: string) => UriTransformer): Promise<void> {
+	public load(file: string, transformerFactory: (workspaceRoot: string) => UriTransformer): Promise<void> {
 		this.db = new Sqlite(file, { readonly: true });
 		this.readMetaData();
 		this.readGroup();
@@ -549,12 +548,12 @@ export class GraphStore extends Database {
 		const group: Group = this.decompress(JSON.parse(this.db.prepare('Select v.value from vertices v Inner Join groups g On v.id = g.id').get().value));
 		if (group !== undefined) {
 			this.groupId = group.id;
-			this.projectRoot = URI.parse(group.rootUri);
+			this.workspaceRoot = URI.parse(group.rootUri);
 		}
 	}
 
-	public getProjectRoot(): URI {
-		return this.projectRoot;
+	public getWorkspaceRoot(): URI {
+		return this.workspaceRoot;
 	}
 
 	public close(): void {
