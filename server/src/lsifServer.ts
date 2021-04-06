@@ -132,8 +132,8 @@ async function createDatabase(folder: WorkspaceFolder): Promise<Database | undef
 				databases.set(getDatabaseKey(folder.uri), promise);
 				return promise;
 			}
-		} catch (_error) {
-			// report FileNotFound when accessing.
+		} catch (error) {
+			throw error;
 		}
 	}
 	return Promise.reject(new Error(`Can't create database for ${folder.uri}`));
