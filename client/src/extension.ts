@@ -13,7 +13,7 @@ import {
 	TransportKind,
 	Disposable,
 	RequestType,
-} from 'vscode-languageclient';
+} from 'vscode-languageclient/node';
 
 let client: LanguageClient;
 
@@ -114,7 +114,7 @@ interface StatFileParams {
 }
 
 namespace StatFileRequest {
-	export const type = new RequestType<StatFileParams, FileStat | null, void, void>('lsif/statFile');
+	export const type = new RequestType<StatFileParams, FileStat | null, void>('lsif/statFile');
 }
 
 interface ReadFileParams {
@@ -122,7 +122,7 @@ interface ReadFileParams {
 }
 
 namespace ReadFileRequest {
-	export const type = new RequestType<ReadFileParams, string, void, void>('lsif/readfile');
+	export const type = new RequestType<ReadFileParams, string, void>('lsif/readfile');
 }
 
 interface ReadDirectoryParams {
@@ -130,7 +130,7 @@ interface ReadDirectoryParams {
 }
 
 namespace ReadDirectoryRequest {
-	export const type = new RequestType<ReadDirectoryParams, [string, FileType][], void, void>('lsif/readDirectory');
+	export const type = new RequestType<ReadDirectoryParams, [string, FileType][], void>('lsif/readDirectory');
 }
 
 class LsifFS implements FileSystemProvider {

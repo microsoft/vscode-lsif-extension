@@ -8,7 +8,11 @@ import * as path from 'path';
 import * as fs from 'fs';
 
 import { URI  } from 'vscode-uri';
-import { createConnection, ProposedFeatures, InitializeParams, TextDocumentSyncKind, WorkspaceFolder, ServerCapabilities, TextDocument, TextDocumentPositionParams, TextDocumentIdentifier, BulkUnregistration, BulkRegistration, DocumentSymbolRequest, DocumentSelector, FoldingRangeRequest, HoverRequest, DefinitionRequest, ReferencesRequest, RequestType, DeclarationRequest, DocumentFilter } from 'vscode-languageserver';
+import {
+	createConnection, ProposedFeatures, InitializeParams, TextDocumentSyncKind, WorkspaceFolder,
+	BulkUnregistration, BulkRegistration, DocumentSymbolRequest, DocumentSelector, FoldingRangeRequest,
+	HoverRequest, DefinitionRequest, ReferencesRequest, RequestType, DeclarationRequest, DocumentFilter
+} from 'vscode-languageserver/node';
 
 import { Database, UriTransformer } from './database';
 import { FileType, FileStat } from './files';
@@ -20,7 +24,7 @@ interface StatFileParams {
 }
 
 namespace StatFileRequest {
-	export const type = new RequestType<StatFileParams, FileStat | null, void, void>('lsif/statFile');
+	export const type = new RequestType<StatFileParams, FileStat | null, void>('lsif/statFile');
 }
 
 interface ReadFileParams {
@@ -28,7 +32,7 @@ interface ReadFileParams {
 }
 
 namespace ReadFileRequest {
-	export const type = new RequestType<ReadFileParams, string | null, void, void>('lsif/readfile');
+	export const type = new RequestType<ReadFileParams, string | null, void>('lsif/readfile');
 }
 
 interface ReadDirectoryParams {
@@ -36,8 +40,10 @@ interface ReadDirectoryParams {
 }
 
 namespace ReadDirectoryRequest {
-	export const type = new RequestType<ReadDirectoryParams, [string, FileType][], void, void>('lsif/readDirectory');
-}let connection = createConnection(ProposedFeatures.all);
+	export const type = new RequestType<ReadDirectoryParams, [string, FileType][], void>('lsif/readDirectory');
+}
+
+let connection = createConnection(ProposedFeatures.all);
 
 class Transformer implements UriTransformer {
 

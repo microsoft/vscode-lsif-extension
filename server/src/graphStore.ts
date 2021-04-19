@@ -9,7 +9,7 @@ import * as lsp from 'vscode-languageserver';
 import { Database, UriTransformer } from './database';
 import {
 	Id, EdgeLabels, DefinitionResult, FoldingRangeResult, DocumentSymbolResult, RangeBasedDocumentSymbol, Range, HoverResult,
-	ReferenceResult, ItemEdgeProperties, DeclarationResult, Moniker, Group, MonikerKind
+	ReferenceResult, ItemEdgeProperties, DeclarationResult, Moniker, MonikerKind, VertexLabels, Vertex, Source
 } from 'lsif-protocol';
 import { MetaData, CompressorDescription, CompressionKind } from './protocol.compress';
 import { DocumentInfo } from './files';
@@ -394,7 +394,7 @@ export class GraphStore extends Database {
 	public load(file: string, transformerFactory: (workspaceRoot: string) => UriTransformer): Promise<void> {
 		this.db = new Sqlite(file, { readonly: true });
 		this.readMetaData();
-		this.readGroup();
+		this.readSource();
 		this.allDocumentsStmt = this.db.prepare('Select id, uri, documentHash From documents');
 		this.getDocumentContentStmt = this.db.prepare('Select content From contents Where documentHash = ?');
 		this.findDocumentStmt = this.db.prepare('Select id From documents Where uri = ?');
@@ -543,11 +543,11 @@ export class GraphStore extends Database {
 		}
 	}
 
-	private readGroup(): void {
-		// take the first group
-		const group: Group = this.decompress(JSON.parse(this.db.prepare('Select v.value from vertices v Inner Join groups g On v.id = g.id').get().value));
-		if (group !== undefined) {
-			this.workspaceRoot = URI.parse(group.rootUri);
+	private readSource(): void {
+		const sourceLabel = this.vertexLabels !== undefined ? this.vertexLabels.get(VertexLabels.source): VertexLabels.source;
+		const source: Source = this.decompress(JSON.parse(this.db.prepare(`Select v.value from vertices v where v.label = ${sourceLabel}`).get().value));
+		if (source !== undefined) {
+			this.workspaceRoot = URI.parse(source.workspaceRoot);
 		}
 	}
 

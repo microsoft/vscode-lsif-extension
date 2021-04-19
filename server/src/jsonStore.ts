@@ -13,7 +13,7 @@ import * as lsp from 'vscode-languageserver';
 import {
 	Id, Vertex, Project, Document, Range, DiagnosticResult, DocumentSymbolResult, FoldingRangeResult, DocumentLinkResult, DefinitionResult,
 	TypeDefinitionResult, HoverResult, ReferenceResult, ImplementationResult, Edge, RangeBasedDocumentSymbol, DeclarationResult, ResultSet,
-	ElementTypes, VertexLabels, EdgeLabels, ItemEdgeProperties, EventScope, EventKind, GroupEvent, ProjectEvent, Moniker as PMoniker, moniker, MonikerKind
+	ElementTypes, VertexLabels, EdgeLabels, ItemEdgeProperties, EventScope, EventKind, ProjectEvent, Moniker as PMoniker, moniker, MonikerKind
 } from 'lsif-protocol';
 
 import { DocumentInfo } from './files';
@@ -166,10 +166,10 @@ export class JsonStore extends Database {
 						reject(new Error(`No valid semantic version string. The version is: ${this.version}`));
 						return;
 					}
-					const range: SemVer.Range = new SemVer.Range('>0.4.99 <=0.5.3');
+					const range: SemVer.Range = new SemVer.Range('>0.5.99 <=0.6.0-next.2');
 					range.includePrerelease = true;
 					if (!SemVer.satisfies(semVer, range)) {
-						reject(new Error(`Requires version 0.5.0 or higher but received: ${this.version}`));
+						reject(new Error(`Requires version 0.6.0 or higher but received: ${this.version}`));
 						return;
 					}
 				}
@@ -193,10 +193,8 @@ export class JsonStore extends Database {
 			case VertexLabels.metaData:
 				this.version = vertex.version;
 				break;
-			case VertexLabels.group:
-				if (vertex.rootUri !== undefined) {
-					this.workspaceRoot = URI.parse(vertex.rootUri);
-				}
+			case VertexLabels.source:
+				this.workspaceRoot = URI.parse(vertex.workspaceRoot);
 				break;
 			case VertexLabels.project:
 				this.vertices.projects.set(vertex.id, vertex);
@@ -204,9 +202,6 @@ export class JsonStore extends Database {
 			case VertexLabels.event:
 				if (vertex.kind === EventKind.begin) {
 					switch (vertex.scope) {
-						case EventScope.group:
-							this.activeGroup = (vertex as GroupEvent).data;
-							break;
 						case EventScope.project:
 							this.activeProject = (vertex as ProjectEvent).data;
 							break;
