@@ -166,10 +166,10 @@ export class JsonStore extends Database {
 						reject(new Error(`No valid semantic version string. The version is: ${this.version}`));
 						return;
 					}
-					const range: SemVer.Range = new SemVer.Range('>0.5.99 <=0.6.0-next.2');
+					const range: SemVer.Range = new SemVer.Range('>0.5.99 <=0.6.0-next.4');
 					range.includePrerelease = true;
 					if (!SemVer.satisfies(semVer, range)) {
-						reject(new Error(`Requires version 0.6.0 or higher but received: ${this.version}`));
+						reject(new Error(`Requires version range >0.5.99 <=0.6.0-next.4 but received: ${this.version}`));
 						return;
 					}
 				}
