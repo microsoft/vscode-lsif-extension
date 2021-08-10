@@ -52,6 +52,7 @@
 	},
 	"scripts": {
 		"vscode:prepublish": "npm run compile",
+		"clean": "tsc -b --clean",
 		"compile": "tsc -b",
 		"watch": "tsc -b -w",
 		"postinstall": "cd client && npm install && cd ../server && npm install && cd .."
