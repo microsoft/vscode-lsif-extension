@@ -222,7 +222,7 @@ connection.onInitialized(async () => {
 			if (uri.scheme === LSIF_SCHEME) {
 				try {
 					await createDatabase(folder);
-				} catch (err) {
+				} catch (err: any) {
 					connection.console.error(err.message);
 				}
 			}

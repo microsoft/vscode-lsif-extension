@@ -23,7 +23,9 @@
 		"onFileSystem:lsif",
 		"onCommand:lsif.openDatabase"
 	],
-	"enableProposedApi": true,
+	"enabledApiProposals": [
+		"documentFiltersExclusive"
+	],
 	"main": "./client/out/extension",
 	"contributes": {
 		"commands": [
