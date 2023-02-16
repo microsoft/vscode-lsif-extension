@@ -76,11 +76,7 @@ export function activate(context: ExtensionContext) {
 	client.start();
 
 	let clientPromise = new Promise<LanguageClient>((resolve, reject) => {
-		client.onReady().then(() => {
-			resolve(client);
-		}, (error) => {
-			reject(error);
-		});
+		client.start().then(() => { resolve(client); }, reject);
 	});
 
 	workspace.registerFileSystemProvider('lsif', new LsifFS(clientPromise), { isCaseSensitive: true, isReadonly: true});

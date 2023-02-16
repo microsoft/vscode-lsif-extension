@@ -6,12 +6,12 @@
 	"version": "0.0.1",
 	"publisher": "vscode",
 	"engines": {
-		"vscode": "^1.56.0"
+		"vscode": "^1.75.0"
 	},
 	"dependencies": {
-		"vscode-languageclient": "^7.0.0"
+		"vscode-languageclient": "^8.1.0"
 	},
 	"devDependencies": {
-		"@types/vscode": "1.52.0"
+		"@types/vscode": "1.75.1"
 	}
 }
