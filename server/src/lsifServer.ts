@@ -112,7 +112,7 @@ async function createDatabase(folder: WorkspaceFolder): Promise<Database | undef
 				const db = new Sqlite(fsPath, { readonly: true });
 				let format = 'graph';
 				try {
-					format = db.prepare('Select * from format f').get().format;
+					format = (db.prepare('Select * from format f').get() as any).format;
 				} catch (err) {
 					// Old DBs have no format. Treat is as graph
 				} finally {
