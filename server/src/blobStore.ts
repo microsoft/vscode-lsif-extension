@@ -174,7 +174,7 @@ export class BlobStore extends Database {
 
 		].join(' '));
 		/* eslint-enable indent */
-		this.version = this.db.prepare('Select * from versionTags Order by dateTime desc').get().tag;
+		this.version = (this.db.prepare('Select * from versionTags Order by dateTime desc').get() as any).tag;
 		if (typeof this.version !== 'string') {
 			throw new Error('Version tag must be a string');
 		}
@@ -183,7 +183,7 @@ export class BlobStore extends Database {
 	}
 
 	private readMetaData(): void {
-		let result: MetaDataResult[] = this.db.prepare('Select * from meta').all();
+		let result: MetaDataResult[] = this.db.prepare('Select * from meta').all() as MetaDataResult[];
 		if (result === undefined || result.length !== 1) {
 			throw new Error('Failed to read meta data record.');
 		}
@@ -199,7 +199,7 @@ export class BlobStore extends Database {
 	}
 
 	protected getDocumentInfos(): DocumentInfo[] {
-		let result: DocumentsResult[] = this.allDocumentsStmt.all(this.version);
+		let result: DocumentsResult[] = this.allDocumentsStmt.all(this.version) as DocumentsResult[];
 		if (result === undefined) {
 			return [];
 		}
@@ -209,7 +209,7 @@ export class BlobStore extends Database {
 	private getBlob(documentId: Id): DocumentBlob {
 		let result = this.blobs.get(documentId);
 		if (result === undefined) {
-			const blobResult: BlobResult = this.findBlobStmt.get(documentId);
+			const blobResult: BlobResult = this.findBlobStmt.get(documentId) as BlobResult;
 			result = JSON.parse(blobResult.content.toString('utf8')) as DocumentBlob;
 			this.blobs.set(documentId, result);
 		}
@@ -217,7 +217,7 @@ export class BlobStore extends Database {
 	}
 
 	protected findFile(uri: string): { id: Id, hash: string | undefined }| undefined {
-		let result: DocumentResult = this.findDocumentStmt.get({ version: this.version, uri: uri });
+		let result: DocumentResult = this.findDocumentStmt.get({ version: this.version, uri: uri }) as DocumentResult;
 		return result !== undefined ? { id: result.id, hash: result.documentHash} : undefined;
 	}
 
@@ -247,7 +247,7 @@ export class BlobStore extends Database {
 		if (moniker === undefined) {
 			return undefined;
 		}
-		const qResult: BlobResult = this.findHoverStmt.get({ version: this.version, scheme: moniker.scheme, identifier: moniker.identifier });
+		const qResult: BlobResult = this.findHoverStmt.get({ version: this.version, scheme: moniker.scheme, identifier: moniker.identifier }) as BlobResult;
 		if (qResult === undefined) {
 			return undefined;
 		}
@@ -276,7 +276,7 @@ export class BlobStore extends Database {
 	}
 
 	private findDeclarationsInDB(moniker: MonikerData): lsp.Location[] | undefined {
-		let qResult: DeclsResult[] = this.findDeclsStmt.all({ version: this.version, scheme: moniker.scheme, identifier: moniker.identifier });
+		let qResult: DeclsResult[] = this.findDeclsStmt.all({ version: this.version, scheme: moniker.scheme, identifier: moniker.identifier }) as DeclsResult[];
 		if (qResult === undefined || qResult.length === 0) {
 			return undefined;
 		}
@@ -303,7 +303,7 @@ export class BlobStore extends Database {
 	}
 
 	private findDefinitionsInDB(moniker: MonikerData): lsp.Location[] | undefined {
-		let qResult: DefsResult[] = this.findDefsStmt.all({ version: this.version, scheme: moniker.scheme, identifier: moniker.identifier });
+		let qResult: DefsResult[] = this.findDefsStmt.all({ version: this.version, scheme: moniker.scheme, identifier: moniker.identifier }) as DefsResult[];
 		if (qResult === undefined || qResult.length === 0) {
 			return undefined;
 		}
@@ -340,7 +340,7 @@ export class BlobStore extends Database {
 	}
 
 	private findReferencesInDB(moniker: MonikerData, context: lsp.ReferenceContext): lsp.Location[] | undefined {
-		let qResult: RefsResult[] = this.findRefsStmt.all({ version: this.version, scheme: moniker.scheme, identifier: moniker.identifier });
+		let qResult: RefsResult[] = this.findRefsStmt.all({ version: this.version, scheme: moniker.scheme, identifier: moniker.identifier }) as RefsResult[];
 		if (qResult === undefined || qResult.length === 0) {
 			return undefined;
 		}
