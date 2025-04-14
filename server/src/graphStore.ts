@@ -287,7 +287,7 @@ abstract class Retriever<T extends IdResult> {
 			? this.getFullStatement(this.batchSize)
 			: this.getRestStatement(batch.length);
 
-		let data: T[] = stmt.all(batch);
+		let data: T[] = stmt.all(batch) as T[];
 		if (batch.length !== data.length) {
 			throw new Error(`Couldn't retrieve all data for retriever ${this.name}`);
 		}
@@ -489,7 +489,7 @@ export class GraphStore extends Database {
 	}
 
 	private readMetaData(): void {
-		let result: MetaDataResult[] = this.db.prepare('Select * from meta').all();
+		let result: MetaDataResult[] = this.db.prepare('Select * from meta').all() as MetaDataResult[];
 		if (result === undefined || result.length !== 1) {
 			throw new Error('Failed to read meta data record.');
 		}
@@ -545,7 +545,7 @@ export class GraphStore extends Database {
 
 	private readSource(): void {
 		const sourceLabel = this.vertexLabels !== undefined ? this.vertexLabels.get(VertexLabels.source): VertexLabels.source;
-		const source: Source = this.decompress(JSON.parse(this.db.prepare(`Select v.value from vertices v where v.label = ${sourceLabel}`).get().value));
+		const source: Source = this.decompress(JSON.parse((this.db.prepare(`Select v.value from vertices v where v.label = ${sourceLabel}`).get() as any).value));
 		if (source !== undefined) {
 			this.workspaceRoot = URI.parse(source.workspaceRoot);
 		}
@@ -560,7 +560,7 @@ export class GraphStore extends Database {
 	}
 
 	protected getDocumentInfos(): DocumentInfo[] {
-		let result: DocumentInfoResult[] = this.allDocumentsStmt.all();
+		let result: DocumentInfoResult[] = this.allDocumentsStmt.all() as DocumentInfoResult[];
 		if (result === undefined) {
 			return [];
 		}
@@ -568,12 +568,12 @@ export class GraphStore extends Database {
 	}
 
 	protected findFile(uri: string): { id: Id, hash: string | undefined } | undefined {
-		let result = this.findDocumentStmt.get(uri);
+		let result = this.findDocumentStmt.get(uri) as any;
 		return result;
 	}
 
 	protected fileContent(info: { id: Id, hash: string | undefined }): string {
-		let result: ContentResult = this.getDocumentContentStmt.get(info.hash);
+		let result: ContentResult = this.getDocumentContentStmt.get(info.hash) as ContentResult;
 		if (!result || !result.content) {
 			return '';
 		}
@@ -702,7 +702,7 @@ export class GraphStore extends Database {
 			}
 
 			const result: lsp.Location[] = [];
-			const queryResult: LocationResult[] = this.findRangeFromResult.all({ id: declarationResult.id });
+			const queryResult: LocationResult[] = this.findRangeFromResult.all({ id: declarationResult.id }) as LocationResult[];
 			if (queryResult && queryResult.length > 0) {
 				for(let item of queryResult) {
 					result.push(this.createLocation(item));
@@ -733,7 +733,7 @@ export class GraphStore extends Database {
 			}
 
 			const result: lsp.Location[] = [];
-			const queryResult: LocationResult[] = this.findRangeFromResult.all({ id: definitionResult.id });
+			const queryResult: LocationResult[] = this.findRangeFromResult.all({ id: definitionResult.id }) as  LocationResult[];
 			if (queryResult && queryResult.length > 0) {
 				for(let item of queryResult) {
 					result.push(this.createLocation(item));
@@ -796,7 +796,7 @@ export class GraphStore extends Database {
 	}
 
 	private resolveReferenceResult(result: lsp.Location[], dedupRanges: Set<Id>, monikers: Map<Id, Moniker>, referenceResult: ReferenceResult, context: lsp.ReferenceContext): void {
-		const qr: LocationResultWithProperty[] = this.findRangeFromReferenceResult.all({ id: referenceResult.id });
+		const qr: LocationResultWithProperty[] = this.findRangeFromReferenceResult.all({ id: referenceResult.id }) as LocationResultWithProperty[];
 		if (qr && qr.length > 0) {
 			const refLabel = this.getItemEdgeProperty(ItemEdgeProperties.references);
 			for (const item of qr) {
@@ -807,7 +807,7 @@ export class GraphStore extends Database {
 			}
 		}
 
-		const mr: VertexResult[] = this.findCascadesFromReferenceResult.all({ id: referenceResult.id });
+		const mr: VertexResult[] = this.findCascadesFromReferenceResult.all({ id: referenceResult.id }) as VertexResult[];
 		if (mr) {
 			for (const moniker of mr) {
 				if (!monikers.has(moniker.id)) {
@@ -816,7 +816,7 @@ export class GraphStore extends Database {
 			}
 		}
 
-		const rqr: VertexResult[] = this.findResultFromReferenceResult.all({ id: referenceResult.id });
+		const rqr: VertexResult[] = this.findResultFromReferenceResult.all({ id: referenceResult.id }) as VertexResult[];
 		if (rqr && rqr.length > 0) {
 			for (const item of rqr) {
 				this.resolveReferenceResult(result, dedupRanges, monikers, this.decompress(JSON.parse(item.value)), context);
@@ -828,11 +828,11 @@ export class GraphStore extends Database {
 		let currentId: Id = id;
 		let moniker: VertexResult | undefined;
 		do {
-			moniker = this.findMonikerStmt.get({ source: currentId });
+			moniker = this.findMonikerStmt.get({ source: currentId }) as VertexResult | undefined;
 			if (moniker !== undefined) {
 				break;
 			}
-			const previous: PreviousResult = this.findPreviousVertexStmt.get({ source: currentId });
+			const previous: PreviousResult = this.findPreviousVertexStmt.get({ source: currentId }) as PreviousResult;
 			if (previous === undefined) {
 				moniker = undefined;
 				break;
@@ -845,7 +845,7 @@ export class GraphStore extends Database {
 		const result: Moniker[] = [this.decompress(JSON.parse(moniker.value))];
 		for (const moniker of result) {
 			monikers.set(moniker.id, moniker);
-			const attachedMonikersResult: VertexResult[] = this.findAttachedMonikersStmt.all({ source: moniker.id });
+			const attachedMonikersResult: VertexResult[] = this.findAttachedMonikersStmt.all({ source: moniker.id }) as VertexResult[];
 			for (const attachedMonikerResult of attachedMonikersResult) {
 				const attachedMoniker: Moniker = this.decompress(JSON.parse(attachedMonikerResult.value));
 				monikers.set(attachedMoniker.id, attachedMoniker);
@@ -854,14 +854,14 @@ export class GraphStore extends Database {
 	}
 
 	private findMatchingMonikers(moniker: Moniker): Moniker[] {
-		const results: VertexResult[] = this.findMatchingMonikersStmt.all({ identifier: moniker.identifier, scheme: moniker.scheme, exclude: moniker.id });
+		const results: VertexResult[] = this.findMatchingMonikersStmt.all({ identifier: moniker.identifier, scheme: moniker.scheme, exclude: moniker.id }) as  VertexResult[];
 		return results.map(vertex => this.decompress(JSON.parse(vertex.value)));
 	}
 
 	private findVertexIdForMoniker(moniker: Moniker): Id | undefined {
 		let currentId: Id = moniker.id;
 		do {
-			const next: NextResult = this.findNextMonikerStmt.get({ source: currentId });
+			const next: NextResult = this.findNextMonikerStmt.get({ source: currentId }) as NextResult;
 			if (next === undefined) {
 				break;
 			}
@@ -870,12 +870,12 @@ export class GraphStore extends Database {
 		if (currentId === undefined) {
 			return;
 		}
-		const result: IdResult = this.findVertexIdForMonikerStmt.get({ id: currentId });
+		const result: IdResult = this.findVertexIdForMonikerStmt.get({ id: currentId }) as IdResult;
 		return result !== undefined ? result.id : undefined;
 	}
 
 	private findRange(uri: string, position: lsp.Position): RangeResult[] | undefined {
-		let dbResult: RangeResult[] = this.findRangeStmt.all({ uri: uri, line: position.line, character: position.character});
+		let dbResult: RangeResult[] = this.findRangeStmt.all({ uri: uri, line: position.line, character: position.character}) as RangeResult[];
 		if (dbResult === undefined || dbResult.length === 0) {
 			return undefined;
 		}
@@ -907,11 +907,11 @@ export class GraphStore extends Database {
 		let currentId = id;
 		let result: VertexResult | undefined;
 		do {
-			result = this.findResultStmt.get({ source: currentId, label: this.getEdgeLabel(label)});
+			result = this.findResultStmt.get({ source: currentId, label: this.getEdgeLabel(label)}) as VertexResult | undefined;
 			if (result !== undefined) {
 				break;
 			}
-			const next: NextResult = this.findNextVertexStmt.get({ source: currentId });
+			const next: NextResult = this.findNextVertexStmt.get({ source: currentId }) as NextResult;
 			if (next === undefined) {
 				result = undefined;
 				break;
@@ -982,7 +982,7 @@ export class GraphStore extends Database {
 	private getResultForDocument(uri: string, label: EdgeLabels.textDocument_documentSymbol): DocumentSymbolResult | undefined;
 	private getResultForDocument(uri: string, label: EdgeLabels.textDocument_foldingRange): FoldingRangeResult | undefined;
 	private getResultForDocument(uri: string, label: EdgeLabels): any | undefined {
-		let data: DocumentResult = this.findResultForDocumentStmt.get({ uri, label: this.getEdgeLabel(label) });
+		let data: DocumentResult = this.findResultForDocumentStmt.get({ uri, label: this.getEdgeLabel(label) }) as DocumentResult;
 		if (data === undefined) {
 			return undefined;
 		}
