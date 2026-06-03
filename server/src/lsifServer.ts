@@ -109,7 +109,7 @@ async function createDatabase(folder: WorkspaceFolder): Promise<Database | undef
 			let database: Database | undefined;
 			if (extName === '.db') {
 				const Sqlite = await import('better-sqlite3');
-				const db = new Sqlite(fsPath, { readonly: true });
+				const db = new Sqlite.default(fsPath, { readonly: true });
 				let format = 'graph';
 				try {
 					format = (db.prepare('Select * from format f').get() as any).format;
@@ -119,14 +119,14 @@ async function createDatabase(folder: WorkspaceFolder): Promise<Database | undef
 					db.close();
 				}
 				if (format === 'blob') {
-					const module = await import('./blobStore');
+					const module = await import('./blobStore.js');
 					database = new module.BlobStore();
 				} else {
-					const module = await import ('./graphStore');
+					const module = await import ('./graphStore.js');
 					database = new module.GraphStore();
 				}
 			} else if (extName === '.lsif') {
-				const module = await import('./jsonStore');
+				const module = await import('./jsonStore.js');
 				database = new module.JsonStore();
 			}
 			if (database !== undefined) {

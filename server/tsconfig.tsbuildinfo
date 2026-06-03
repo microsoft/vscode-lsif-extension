@@ -1,0 +1,1 @@
+{"root":["./src/blobStore.ts","./src/database.ts","./src/files.ts","./src/graphStore.ts","./src/is.ts","./src/jsonStore.ts","./src/lsifServer.ts","./src/protocol.compress.ts","./src/test.ts"],"errors":true,"version":"6.0.3"}
